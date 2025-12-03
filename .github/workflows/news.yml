@@ -1,0 +1,17 @@
+name: News digest test
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # svakih 15 minuta
+  workflow_dispatch:          # da možeš ručno da pokreneš
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Test step
+        run: echo "Radi cron $(date)"
