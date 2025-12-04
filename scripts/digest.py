@@ -8,7 +8,7 @@ import openai
 RAW_DIR = Path("raw")
 OUTPUT = Path("news.xml")
 
-# U GitHub Actions će doći iz secrets (VESTI je ime secreta)
+# u GitHub Actions dolazi iz env promenljive VESTI
 openai.api_key = os.getenv("VESTI")
 
 
@@ -16,6 +16,7 @@ def load_recent_news(hours: int = 24):
     """Učitaj vesti iz raw/ u poslednjih X sati (default 24)."""
     items = []
     if not RAW_DIR.exists():
+        print("RAW_DIR ne postoji, nema vesti.")
         return items
 
     cutoff = datetime.utcnow() - timedelta(hours=hours)
@@ -58,11 +59,10 @@ def build_model_input(items):
         source = it.get("source", "").strip()
         subtitle = it.get("subtitle", "").strip()
         full = it.get("full_text", "").strip()
-        url = it.get("url", "").strip()
+        url = it.get("url") or it.get("link") or ""
 
-        # ograničimo full_text da ne bude predugačko
-        if full and len(full) > 800:
-            full = full[:800] + "…"
+        if full and len(full) > 1200:
+            full = full[:1200] + "…"
 
         block = f"""VEST {idx}
 IZVOR: {source}
@@ -82,7 +82,7 @@ def call_openai_for_digest(raw_text: str) -> list:
     Vraća listu dict-ova: { "title": ..., "summary": ..., "links": [...] }
     """
     if not openai.api_key:
-        print("Nema API ključa (VESTI), preskačem AI digest.")
+        print("Nema API ključa (env VESTI nije postavljen), preskačem AI digest.")
         return []
 
     system_msg = (
@@ -101,9 +101,9 @@ def call_openai_for_digest(raw_text: str) -> list:
         "5) Stil: jasno, smireno, bez senzacionalizma, kao dobar analitički newsletter.\n"
         "Obavezno odgovori u JSON formatu sa ključem 'topics', gde je svaki element:\n"
         "{\n"
-        '  "title": "naslov teme",\n'
-        '  "summary": "opsežan sažetak na srpskom",\n'
-        '  "links": ["https://...","https://..."]\n'
+        '  \"title\": \"naslov teme\",\n'
+        '  \"summary\": \"opsežan sažetak na srpskom\",\n'
+        '  \"links\": [\"https://...\",\"https://...\"]\n'
         "}\n"
     )
 
@@ -141,7 +141,9 @@ def call_openai_for_digest(raw_text: str) -> list:
         data = json.loads(json_str)
         topics = data.get("topics", [])
         if not isinstance(topics, list):
+            print("JSON nema listu 'topics'.")
             return []
+        print(f"Model vratio {len(topics)} tema.")
         return topics
     except Exception as e:
         print("Greška pri parsiranju JSON odgovora:", e)
@@ -163,17 +165,16 @@ def generate_rss_from_topics(topics: list):
     )
 
     for topic in topics:
-        title = topic.get("title", "").strip() or "Tema bez naslova"
-        summary = topic.get("summary", "").strip()
-        links = topic.get("links", [])
+        title = (topic.get("title") or "").strip() or "Tema bez naslova"
+        summary = (topic.get("summary") or "").strip()
+        links = topic.get("links") or []
 
         item_el = ET.SubElement(channel, "item")
         ET.SubElement(item_el, "title").text = title
 
-        # Description = sažetak + linkovi, kao HTML
         desc_parts = []
         if summary:
-            desc_parts.append(summary.strip())
+            desc_parts.append(summary)
 
         if links:
             links_lines = "<br/>".join(links)
