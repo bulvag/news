@@ -11,6 +11,8 @@ permissions:
 jobs:
   digest:
     runs-on: ubuntu-latest
+    env:
+      VESTI: ${{ secrets.VESTI }}
 
     steps:
       - name: Checkout repo
