@@ -222,6 +222,14 @@ def generate_raw_feed(items: list):
 # ---------- 5) AI DIGEST RSS (news/digest.xml) ----------
 
 def generate_digest(topics: list):
+    print("DIGEST: Broj tema =", len(topics))
+
+    total_links = 0
+    for t in topics:
+        links = t.get("links") or []
+        total_links += len(links)
+    print("DIGEST: Ukupno obrađenih vesti =", total_links)
+
     rss = ET.Element("rss", version="2.0")
     ch = ET.SubElement(rss, "channel")
 
