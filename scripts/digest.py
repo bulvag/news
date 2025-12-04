@@ -24,7 +24,7 @@ client = OpenAI(api_key=API_KEY)
 
 # ---------- 1) UČITAVANJE VESTI ----------
 
-def load_recent_news(hours: int = 1, max_items: int = 100):
+def load_recent_news(hours: int = 6, max_items: int = 200):
     """
     Učitaj vesti iz RAW_DIR koje su novije od `hours` sati,
     sortiraj po datumu opadajuće i uzmi najviše `max_items` komada.
