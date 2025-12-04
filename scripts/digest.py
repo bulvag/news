@@ -250,8 +250,10 @@ def generate_digest(topics: list):
         body_parts = []
         if summary:
             body_parts.append(summary)
+
         if links:
-        body_parts.append("<br/><br/><b>VESTI:</b><br/>" + "<br/>".join(links))
+            html_links = "<br/>".join([f'<a href="{u}">{u}</a>' for u in links])
+            body_parts.append("<br/><br/><b>VESTI:</b><br/>" + html_links)
 
         desc = " ".join(body_parts) if body_parts else "Nema dodatnog sažetka."
         ET.SubElement(item, "description").text = desc
