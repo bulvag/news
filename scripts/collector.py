@@ -9,19 +9,6 @@ SOURCES = [
     "http://www.danas.rs/rss/rss.asp",
     "https://feeds.bbci.co.uk/news/rss.xml",
     "https://feeds.bbci.co.uk/news/world/rss.xml",
-    "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
-    "https://feeds.bbci.co.uk/news/business/rss.xml",
-    "https://feeds.bbci.co.uk/news/technology/rss.xml",
-    "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml",
-    "https://www.bbc.com/culture/feed.rss",
-    "https://feeds.bbci.co.uk/news/world/latin_america/rss.xml",
-    "https://feeds.bbci.co.uk/news/world/australia/rss.xml",
-    "http://newsrss.bbc.co.uk/rss/newsonline_uk_edition/uk_politics/rss.xml",
-    "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml",
-    "https://feeds.bbci.co.uk/news/world/africa/rss.xml",
-    "https://feeds.bbci.co.uk/news/world/asia/india/rss.xml",
-    "https://feeds.bbci.co.uk/news/world/europe/rss.xml",
-    "https://feeds.bbci.co.uk/news/world/asia/china/rss.xml",
 ]
 
 RAW_DIR = Path("raw")
