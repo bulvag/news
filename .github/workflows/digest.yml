@@ -19,7 +19,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install deps
-        run: pip install openai
+        run: pip install openai==1.63.0
 
       - name: Run digest
         env:
