@@ -1,6 +1,7 @@
 name: Build digest
 
 on:
+  # dva puta dnevno, po srpskom vremenu će biti pomereno ali to sad nije kritično
   schedule:
     - cron: "0 8,16 * * *"
   workflow_dispatch:
@@ -17,8 +18,6 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -26,7 +25,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install feedparser openai
+        run: |
+          pip install feedparser
+          pip install openai==0.28.1
 
       - name: Build digest
         run: python scripts/digest.py
@@ -36,5 +37,5 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add news.xml
-          git commit -m "Update digest" || echo "No changes."
+          git commit -m "Update AI digest" || echo "No changes."
           git push origin HEAD:main
