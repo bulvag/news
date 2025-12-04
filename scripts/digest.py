@@ -4,12 +4,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import openai
-import textwrap
 
 RAW_DIR = Path("raw")
 OUTPUT = Path("news.xml")
 
-# U GitHub Actions će doći iz secrets
+# U GitHub Actions će doći iz secrets (VESTI je ime secreta)
 openai.api_key = os.getenv("VESTI")
 
 
@@ -83,21 +82,23 @@ def call_openai_for_digest(raw_text: str) -> list:
     Vraća listu dict-ova: { "title": ..., "summary": ..., "links": [...] }
     """
     if not openai.api_key:
-        print("Nema OPENAI_API_KEY, preskačem AI digest.")
+        print("Nema API ključa (VESTI), preskačem AI digest.")
         return []
 
     system_msg = (
         "Ti si analitičar koji pravi PAMETAN novinski pregled za jednu osobu.\n"
-        "Radiš na srpskom jeziku (ijekavica ili ekavica su obe ok, samo budi konzistentan).\n"
+        "OBAVEZNO odgovaraj ISKLJUČIVO na srpskom jeziku (ekavica ili ijekavica su ok, "
+        "ali nemoj koristiti engleski osim u nazivima institucija ili ličnim imenima).\n"
         "Ulaz su pojedinačne vesti (naslov, tekst, izvor, link). "
         "Tvoj zadatak je:\n"
-        "1) da sam grupišeš vesti po temama/žarištima (npr. Ukrajina/Rusija, Gaza/Izrael, "
+        "1) da SAM grupišeš vesti po temama/žarištima (npr. Ukrajina/Rusija, Gaza/Izrael, "
         "   izbori u nekoj zemlji, protesti, ekonomske teme, klimatske katastrofe itd.).\n"
-        "2) da za SVAKU temu napraviš jedan tematski sažetak od ~8–12 rečenica.\n"
-        "3) da kontekst i „šira slika“ budu UTKANI u tekst, ne da ih odvajaš u posebnu sekciju.\n"
-        "4) brojke i detaljne statistike koristi samo ako su stvarno bitni.\n"
-        "5) za svaku temu navedi listu linkova važnih vesti koje opisuješ.\n"
-        "6) stil: jasno, sažeto, bez senzacionalizma, kao dobar analitički newsletter.\n"
+        "2) da za SVAKU temu napraviš jedan tematski sažetak od približno 5–12 rečenica.\n"
+        "   Počni sa 1–2 rečenice koje jasno kažu šta je suština problema danas, "
+        "   a zatim objasni širi kontekst i posledice.\n"
+        "3) Brojke i statistike koristi samo ako su stvarno bitne za razumevanje.\n"
+        "4) Za svaku temu navedi listu linkova najvažnijih vesti koje opisuješ.\n"
+        "5) Stil: jasno, smireno, bez senzacionalizma, kao dobar analitički newsletter.\n"
         "Obavezno odgovori u JSON formatu sa ključem 'topics', gde je svaki element:\n"
         "{\n"
         '  "title": "naslov teme",\n'
@@ -109,13 +110,11 @@ def call_openai_for_digest(raw_text: str) -> list:
     user_msg = (
         "Ovo su vesti iz poslednja 24 sata. Nemoj da praviš pregled po državama po difoltu, "
         "nego po stvarnim temama koje uočavaš. Ako se neka tema pojavljuje samo jednom, "
-        "i dalje je uključi kao zasebnu temu, ali nemoj da izmišljas teme ako ih nema.\n\n"
+        "i dalje je uključi kao zasebnu temu, ali nemoj da izmišljaš teme ako ih nema.\n\n"
         "Vesti:\n\n"
         + raw_text
     )
 
-    # Pošto smo u najnovijem OpenAI API-ju, koristimo 'client' objekat u realnom kodu,
-    # ali za jednostavnost koristimo stariji stil:
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4o-mini",
@@ -130,11 +129,8 @@ def call_openai_for_digest(raw_text: str) -> list:
         return []
 
     content = response["choices"][0]["message"]["content"]
-    # pokušaj parsiranja JSON-a
     try:
-        # ako je model možda vratio tekst pre/posle, pokušaj da izvučeš blok sa JSON-om
         content_stripped = content.strip()
-        # najnaivnije: nađi prvi '{' i poslednju '}' i uzmi to
         start = content_stripped.find("{")
         end = content_stripped.rfind("}")
         if start != -1 and end != -1:
@@ -174,21 +170,23 @@ def generate_rss_from_topics(topics: list):
         item_el = ET.SubElement(channel, "item")
         ET.SubElement(item_el, "title").text = title
 
-        # Description = sažetak + linkovi
-        desc_parts = [summary] if summary else []
-        if links:
-            links_text = "\n\nVesti:\n" + "\n".join(f"- {u}" for u in links)
-            desc_parts.append(links_text)
+        # Description = sažetak + linkovi, kao HTML
+        desc_parts = []
+        if summary:
+            desc_parts.append(summary.strip())
 
-        desc = "\n".join(desc_parts) if desc_parts else "Nema detaljnog sažetka."
+        if links:
+            links_lines = "<br/>".join(links)
+            links_html = f"<br/><br/><b>Vesti:</b><br/>{links_lines}"
+            desc_parts.append(links_html)
+
+        desc = " ".join(desc_parts) if desc_parts else "Nema detaljnog sažetka."
         ET.SubElement(item_el, "description").text = desc
 
-        # pubDate = sada
         ET.SubElement(item_el, "pubDate").text = datetime.utcnow().strftime(
             "%a, %d %b %Y %H:%M:%S GMT"
         )
 
-        # kao guid možemo uzeti naslov + timestamp
         guid_val = f"{title}-{datetime.utcnow().isoformat()}"
         ET.SubElement(item_el, "guid").text = guid_val
 
