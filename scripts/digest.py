@@ -3,28 +3,27 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 import xml.etree.ElementTree as ET
-import openai
+from openai import OpenAI
 
 # FOLDERI
 RAW_DIR = Path("raw")
-RAW_OUTPUT = Path("news/news.xml")      # obične sirove vesti
-DIGEST_OUTPUT = Path("news/digest.xml")  # AI digest
+RAW_OUTPUT = Path("news/news.xml")
+DIGEST_OUTPUT = Path("news/digest.xml")
 
-# KREIRAJ NEWS/ AKO NE POSTOJI
 RAW_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 DIGEST_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
-# API ključ
-openai.api_key = os.getenv("VESTI")
+# API KEY
+API_KEY = os.getenv("VESTI")
+client = OpenAI(api_key=API_KEY)
 
 
-def load_recent_news(hours: int = 24):
+def load_recent_news(hours=24):
     items = []
-    if not RAW_DIR.exists():
-        print("RAW_DIR ne postoji, nema vesti.")
-        return items
-
     cutoff = datetime.utcnow() - timedelta(hours=hours)
+
+    if not RAW_DIR.exists():
+        return items
 
     for fname in os.listdir(RAW_DIR):
         if not fname.endswith(".json"):
@@ -32,69 +31,60 @@ def load_recent_news(hours: int = 24):
 
         path = RAW_DIR / fname
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception as e:
-            print(f"Greška pri čitanju {path}: {e}")
+            data = json.load(open(path, "r", encoding="utf-8"))
+        except:
             continue
 
-        fetched_at = data.get("fetched_at")
-        if fetched_at:
-            try:
-                dt = datetime.fromisoformat(fetched_at.replace("Z", ""))
-            except Exception:
-                dt = None
-        else:
-            dt = None
-
-        if dt is None or dt < cutoff:
+        ts = data.get("fetched_at")
+        if not ts:
             continue
 
-        items.append(data)
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", ""))
+        except:
+            continue
 
-    print(f"Učitano {len(items)} vesti (poslednjih {hours}h)")
+        if dt >= cutoff:
+            items.append(data)
+
+    print("Učitano", len(items), "vesti")
     return items
 
 
 def build_model_input(items):
-    parts = []
-    for idx, it in enumerate(items, start=1):
-        title = it.get("title", "").strip()
-        source = it.get("source", "").strip()
-        subtitle = it.get("subtitle", "").strip()
-        full = it.get("full_text", "").strip()
-        url = it.get("url") or it.get("link") or ""
-
-        if full and len(full) > 1200:
+    blocks = []
+    for i, it in enumerate(items, 1):
+        full = it.get("full_text", "")
+        if len(full) > 1200:
             full = full[:1200] + "…"
 
-        block = f"""VEST {idx}
-IZVOR: {source}
-NASLOV: {title}
-PODNASLOV: {subtitle}
+        block = f"""
+VEST {i}
+IZVOR: {it.get('source','')}
+NASLOV: {it.get('title','')}
+PODNASLOV: {it.get('subtitle','')}
 TEKST: {full}
-LINK: {url}
+LINK: {it.get('url') or it.get('link') or ''}
 """
-        parts.append(block)
+        blocks.append(block)
 
-    return "\n\n".join(parts)
+    return "\n\n".join(blocks)
 
 
-def call_openai_for_digest(raw_text: str) -> list:
-    if not openai.api_key:
-        print("Nema API ključa (env VESTI nije postavljen), preskačem AI digest.")
+def call_openai_for_digest(text):
+    if not API_KEY:
+        print("Nema API key-a")
         return []
 
     system_msg = (
-        "Ti si analitičar koji pravi pametan novinski pregled.\n"
-        "Odgovaraj ISKLJUČIVO na srpskom jeziku.\n"
-        "Grupiši vesti po temama, napravi sažetak, vrati JSON sa ključem 'topics'.\n"
+        "Ti si analitičar. Odgovaraj ISKLJUČIVO na srpskom. "
+        "Grupiši vesti po temama i vrati JSON sa ključem 'topics'."
     )
 
-    user_msg = "Vesti:\n\n" + raw_text
+    user_msg = "Vesti:\n\n" + text
 
     try:
-        response = openai.ChatCompletion.create(
+        resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_msg},
@@ -103,117 +93,87 @@ def call_openai_for_digest(raw_text: str) -> list:
             temperature=0.4,
         )
     except Exception as e:
-        print(f"Greška pri OpenAI pozivu: {e}")
+        print("OpenAI ERROR:", e)
         return []
 
-    content = response["choices"][0]["message"]["content"]
+    content = resp.choices[0].message.content.strip()
 
-    # parse JSON
+    # izvlačenje JSON-a
     try:
-        s = content.strip()
-        start = s.find("{")
-        end = s.rfind("}")
-        if start != -1 and end != -1:
-            s = s[start:end+1]
-
+        s = content
+        s = s[s.find("{") : s.rfind("}") + 1]
         data = json.loads(s)
         topics = data.get("topics", [])
-        if not isinstance(topics, list):
-            return []
-
-        print(f"AI vratio {len(topics)} tema.")
         return topics
-
     except Exception as e:
-        print("Greška pri JSON parsiranju:", e)
-        print("Sirovi odgovor:")
+        print("JSON ERROR:", e)
         print(content)
         return []
 
 
 def generate_raw_feed(items):
     rss = ET.Element("rss", version="2.0")
-    channel = ET.SubElement(rss, "channel")
+    ch = ET.SubElement(rss, "channel")
 
-    ET.SubElement(channel, "title").text = "News digest (RAW feed)"
-    ET.SubElement(channel, "link").text = "https://bulvag.github.io/news/news.xml"
-    ET.SubElement(channel, "description").text = "Sirove vesti pre AI obrade"
-    ET.SubElement(channel, "language").text = "sr"
-    ET.SubElement(channel, "lastBuildDate").text = datetime.utcnow().strftime(
-        "%a, %d %b %Y %H:%M:%S GMT"
-    )
+    ET.SubElement(ch, "title").text = "News digest RAW"
+    ET.SubElement(ch, "link").text = "https://bulvag.github.io/news/news.xml"
+    ET.SubElement(ch, "description").text = "Sirove vesti"
+    ET.SubElement(ch, "language").text = "sr"
 
     for it in items:
-        item = ET.SubElement(channel, "item")
+        item = ET.SubElement(ch, "item")
         ET.SubElement(item, "title").text = it.get("title", "")
-        ET.SubElement(item, "link").text = it.get("url") or ""
-        ET.SubElement(item, "guid").text = it.get("url") or ""
-        ET.SubElement(item, "description").text = it.get("full_text", "")[:500]
-
+        ET.SubElement(item, "link").text = it.get("url", "")
+        ET.SubElement(item, "guid").text = it.get("url", "")
+        ET.SubElement(item, "description").text = (it.get("full_text") or "")[:500]
         ET.SubElement(item, "pubDate").text = datetime.utcnow().strftime(
             "%a, %d %b %Y %H:%M:%S GMT"
         )
 
-    tree = ET.ElementTree(rss)
-    tree.write(RAW_OUTPUT, encoding="utf-8", xml_declaration=True)
-    print("RAW feed upisan:", RAW_OUTPUT)
+    ET.ElementTree(rss).write(RAW_OUTPUT, encoding="utf-8", xml_declaration=True)
+    print("RAW OK")
 
 
-def generate_ai_digest(topics: list):
+def generate_digest(topics):
     rss = ET.Element("rss", version="2.0")
-    channel = ET.SubElement(rss, "channel")
+    ch = ET.SubElement(rss, "channel")
 
-    ET.SubElement(channel, "title").text = "AI news digest (Danas + BBC)"
-    ET.SubElement(channel, "link").text = "https://bulvag.github.io/news/digest.xml"
-    ET.SubElement(channel, "description").text = "Tematski AI sažeci vesti"
-    ET.SubElement(channel, "language").text = "sr"
-    ET.SubElement(channel, "lastBuildDate").text = datetime.utcnow().strftime(
-        "%a, %d %b %Y %H:%M:%S GMT"
-    )
+    ET.SubElement(ch, "title").text = "AI digest"
+    ET.SubElement(ch, "link").text = "https://bulvag.github.io/news/digest.xml"
+    ET.SubElement(ch, "description").text = "AI tematski sažeci"
+    ET.SubElement(ch, "language").text = "sr"
 
     for t in topics:
-        title = t.get("title") or "Tema bez naslova"
-        summary = t.get("summary") or ""
-        links = t.get("links") or []
-
-        item = ET.SubElement(channel, "item")
-        ET.SubElement(item, "title").text = title
-
-        body = summary
+        item = ET.SubElement(ch, "item")
+        ET.SubElement(item, "title").text = t.get("title", "Bez naslova")
+        body = t.get("summary", "")
+        links = t.get("links", [])
         if links:
-            body += "<br/><br/><b>Vesti:</b><br/>" + "<br/>".join(links)
+            body += "<br/><br/><b>VESTI:</b><br/>" + "<br/>".join(links)
 
         ET.SubElement(item, "description").text = body
-
+        ET.SubElement(item, "guid").text = t.get("title", "") + datetime.utcnow().isoformat()
         ET.SubElement(item, "pubDate").text = datetime.utcnow().strftime(
             "%a, %d %b %Y %H:%M:%S GMT"
         )
 
-        guid = f"{title}-{datetime.utcnow().isoformat()}"
-        ET.SubElement(item, "guid").text = guid
-
-    tree = ET.ElementTree(rss)
-    tree.write(DIGEST_OUTPUT, encoding="utf-8", xml_declaration=True)
-    print("AI digest upisan:", DIGEST_OUTPUT)
+    ET.ElementTree(rss).write(DIGEST_OUTPUT, encoding="utf-8", xml_declaration=True)
+    print("DIGEST OK")
 
 
 def main():
-    items = load_recent_news(hours=24)
+    items = load_recent_news()
     if not items:
-        print("Nema vesti u RAW folderu!")
+        print("Nema vesti!")
         return
 
-    # RAW RSS
     generate_raw_feed(items)
 
-    # AI digest
-    raw_text = build_model_input(items)
-    topics = call_openai_for_digest(raw_text)
-
+    topics = call_openai_for_digest(build_model_input(items))
     if topics:
-        generate_ai_digest(topics)
+        generate_digest(topics)
     else:
-        print("AI digest nije generisan (nema tema).")
+        print("Nema tema — digest preskočen")
 
 
 if __name__ == "__main__":
