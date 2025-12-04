@@ -5,7 +5,9 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 from openai import OpenAI
 
+# -------------------------------
 # FOLDERI
+# -------------------------------
 RAW_DIR = Path("raw")
 RAW_OUTPUT = Path("news/news.xml")
 DIGEST_OUTPUT = Path("news/digest.xml")
@@ -13,11 +15,16 @@ DIGEST_OUTPUT = Path("news/digest.xml")
 RAW_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 DIGEST_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
-# API KEY
+# -------------------------------
+# OPENAI
+# -------------------------------
 API_KEY = os.getenv("VESTI")
 client = OpenAI(api_key=API_KEY)
 
 
+# -------------------------------
+# LOADING RAW JSON VESTI
+# -------------------------------
 def load_recent_news(hours=24):
     items = []
     cutoff = datetime.utcnow() - timedelta(hours=hours)
@@ -30,8 +37,10 @@ def load_recent_news(hours=24):
             continue
 
         path = RAW_DIR / fname
+
         try:
-            data = json.load(open(path, "r", encoding="utf-8"))
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
         except:
             continue
 
@@ -47,10 +56,13 @@ def load_recent_news(hours=24):
         if dt >= cutoff:
             items.append(data)
 
-    print("Učitano", len(items), "vesti")
+    print(f"Učitano {len(items)} vesti")
     return items
 
 
+# -------------------------------
+# INPUT ZA GPT
+# -------------------------------
 def build_model_input(items):
     blocks = []
     for i, it in enumerate(items, 1):
@@ -71,14 +83,19 @@ LINK: {it.get('url') or it.get('link') or ''}
     return "\n\n".join(blocks)
 
 
+# -------------------------------
+# GPT → topics JSON
+# -------------------------------
 def call_openai_for_digest(text):
     if not API_KEY:
         print("Nema API key-a")
         return []
 
     system_msg = (
-        "Ti si analitičar. Odgovaraj ISKLJUČIVO na srpskom. "
-        "Grupiši vesti po temama i vrati JSON sa ključem 'topics'."
+        "Ti si analitičar vesti. "
+        "Odgovaraj ISKLJUČIVO na srpskom jeziku. "
+        "Grupiši vesti po temama i vrati JSON oblika:\n"
+        "{ 'topics': [ { 'title': '', 'summary': '', 'links': [] } ] }"
     )
 
     user_msg = "Vesti:\n\n" + text
@@ -98,19 +115,44 @@ def call_openai_for_digest(text):
 
     content = resp.choices[0].message.content.strip()
 
-    # izvlačenje JSON-a
+    # ------------------------
+    # JSON ekstrakcija
+    # ------------------------
     try:
         s = content
         s = s[s.find("{") : s.rfind("}") + 1]
         data = json.loads(s)
         topics = data.get("topics", [])
-        return topics
     except Exception as e:
         print("JSON ERROR:", e)
         print(content)
         return []
 
+    # ------------------------
+    # NORMALIZACIJA — fix GPT gluposti
+    # ------------------------
+    fixed = []
+    for t in topics:
+        if isinstance(t, dict):
+            fixed.append({
+                "title": t.get("title", "Bez naslova"),
+                "summary": t.get("summary", ""),
+                "links": t.get("links", []),
+            })
+        elif isinstance(t, str):
+            # GPT nekad vrati string umesto dict
+            fixed.append({
+                "title": t,
+                "summary": "",
+                "links": [],
+            })
 
+    return fixed
+
+
+# -------------------------------
+# RAW RSS
+# -------------------------------
 def generate_raw_feed(items):
     rss = ET.Element("rss", version="2.0")
     ch = ET.SubElement(rss, "channel")
@@ -134,6 +176,9 @@ def generate_raw_feed(items):
     print("RAW OK")
 
 
+# -------------------------------
+# DIGEST RSS
+# -------------------------------
 def generate_digest(topics):
     rss = ET.Element("rss", version="2.0")
     ch = ET.SubElement(rss, "channel")
@@ -146,8 +191,10 @@ def generate_digest(topics):
     for t in topics:
         item = ET.SubElement(ch, "item")
         ET.SubElement(item, "title").text = t.get("title", "Bez naslova")
+
         body = t.get("summary", "")
         links = t.get("links", [])
+
         if links:
             body += "<br/><br/><b>VESTI:</b><br/>" + "<br/>".join(links)
 
@@ -161,6 +208,9 @@ def generate_digest(topics):
     print("DIGEST OK")
 
 
+# -------------------------------
+# MAIN
+# -------------------------------
 def main():
     items = load_recent_news()
     if not items:
