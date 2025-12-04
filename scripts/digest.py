@@ -117,30 +117,37 @@ def call_openai_for_digest(text: str) -> list:
         return []
 
     system_msg = (
-        "Ti si novinar koji piše dnevni pregled vesti za jednu osobu.\n"
-        "Ulaz su pojedinačne vesti (naslov, tekst, izvor, link).\n"
-        "Tvoj zadatak je:\n"
-        "1) Da SAM odrediš tematske grupe (teme) na osnovu stvarnih žarišta u vestima "
-        "(npr. rat u Ukrajini, Gaza/Izrael, politika u Srbiji, protesti u Srbiji, ekonomija, Zapadna Afrika, Indija, itd.).\n"
-        "2) Svaku vest MORAŠ da smestiš u neku temu. Nema preskakanja vesti.\n"
-        "3) Broj tema može biti veliki (koliko god da treba) – ne ograničavaj se na par tema.\n"
-        "4) Za SVAKU temu:\n"
-        "   - 'title': kratak naslov teme na srpskom jeziku.\n"
-        "   - 'summary': sažetak od 5–12 rečenica na SRPSKOM jeziku - to su grupisane vesti na istu temu "
-        "(mirno, jasno, bez senzacionalizma; objasni šta se dešava i zašto je važno).\n"
-        "   - 'links': lista SVIH linkova vesti koje spominješ u toj temi. Nemoj izostavljati vesti.\n"
-        "5) Svaka vest bi treba da se pojavi u tačno jednoj temi, osim ako je nešto posebno relevantno za sve.\n"
-        "Odgovori ISKLJUČIVO u JSON formatu, bez ikakvog dodatnog teksta, ovako:\n"
-        "{\n"
-        "  \"topics\": [\n"
-        "    {\"title\": \"…\", \"summary\": \"…\", \"links\": [\"https://…\", \"https://…\"]},\n"
-        "    {\"title\": \"…\", \"summary\": \"…\", \"links\": [\"https://…\"]}\n"
-        "  ]\n"
-        "}\n"
-    )
+    "Ti si napredni analitičar vesti. Odgovaraj ISKLJUČIVO na srpskom jeziku.\n\n"
+    "Dobićeš veliki broj vesti iz različitih izvora. Svaku vest moraš obraditi — ništa se ne preskače.\n\n"
+    "Tvoj zadatak:\n\n"
+    "1. Automatski grupiši vesti u tematske celine:\n"
+    "   – koristi semantičko razumevanje,\n"
+    "   – teme formiraj inteligentno (ne po ključnim rečima),\n"
+    "   – grupiši zajedno vesti koje govore o istom događaju, istoj situaciji, istoj državi, regionu ili narativu,\n"
+    "   – napravi onoliko tema koliko je zaista potrebno (10, 20, 30… nije bitno).\n\n"
+    "2. Za svaku temu kreiraj:\n"
+    "   • \"title\" – kratak, precizan tematski naslov,\n"
+    "   • \"summary\" – sažetak od 5–12 jasnih rečenica koji opisuje šta se dešava,\n"
+    "   • \"links\" – listu svih URL-ova vesti koje pripadaju toj temi.\n\n"
+    "3. Način rada:\n"
+    "   – ništa ne izmišljaš,\n"
+    "   – ne grupišeš po redosledu, već po značenju,\n"
+    "   – tema treba da objašnjava šta se ukupno dešava,\n"
+    "   – sve vesti moraju biti uključene u neku temu; ne sme ostati nijedna van kategorije.\n\n"
+    "Vrati odgovor ISKLJUČIVO kao validan JSON sledeće strukture (bez dodatnog teksta izvan JSON-a):\n\n"
+    "{\n"
+    "  \"topics\": [\n"
+    "    {\n"
+    "      \"title\": \"...\",\n"
+    "      \"summary\": \"...\",\n"
+    "      \"links\": [\"...\", \"...\"]\n"
+    "    }\n"
+    "  ]\n"
+    "}\n"
+)
 
     user_msg = (
-        "Ovo su vesti iz poslednja 24 sata (svaka počinje sa 'VEST N'). "
+        "Tuturutu (svaka počinje sa 'VEST N'). "
         "Iskoristi SVE vesti, bez preskakanja.\n\n"
         + text
     )
@@ -244,7 +251,7 @@ def generate_digest(topics: list):
         if summary:
             body_parts.append(summary)
         if links:
-            body_parts.append("<br/><br/><b>VESTI:</b><br/>" + "<br/>".join(links))
+        body_parts.append("<br/><br/><b>VESTI:</b><br/>" + "<br/>".join(links))
 
         desc = " ".join(body_parts) if body_parts else "Nema dodatnog sažetka."
         ET.SubElement(item, "description").text = desc
@@ -255,7 +262,7 @@ def generate_digest(topics: list):
             "%a, %d %b %Y %H:%M:%S GMT"
         )
 
-    ET.ElementTree(rss).write(DIGEST_OUTPUT, encoding="utf-8", xml declaration=True)
+    ET.ElementTree(rss).write(DIGEST_OUTPUT, encoding="utf-8", xml_declaration=True)
     print("DIGEST OK →", DIGEST_OUTPUT)
 
 
