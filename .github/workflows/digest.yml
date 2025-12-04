@@ -1,41 +1,35 @@
 name: Build digest
 
 on:
-  # dva puta dnevno, po srpskom vremenu će biti pomereno ali to sad nije kritično
-  schedule:
-    - cron: "0 8,16 * * *"
   workflow_dispatch:
-
-permissions:
-  contents: write
+  schedule:
+    - cron: "0 6,18 * * *"
 
 jobs:
-  digest:
+  build:
     runs-on: ubuntu-latest
-    env:
-      VESTI: ${{ secrets.VESTI }}
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: |
-          pip install feedparser
-          pip install openai==0.28.1
+      - name: Install deps
+        run: pip install openai
 
-      - name: Build digest
+      - name: Run digest
+        env:
+          VESTI: ${{ secrets.VESTI }}
         run: python scripts/digest.py
 
-      - name: Commit & push digest
+      - name: Commit & push
         run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add news.xml
-          git commit -m "Update AI digest" || echo "No changes."
-          git push origin HEAD:main
+          git config --local user.email "github-actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add news/news.xml news/digest.xml || true
+          git commit -m "Update feeds" || true
+          git push || true
