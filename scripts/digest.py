@@ -166,7 +166,7 @@ def call_openai_for_digest(text: str) -> list:
 
     user_msg = (
         "Ovo su vesti iz poslednjih nekoliko sati (svaka počinje sa 'VEST N'). "
-        "Iskoristi SVE vesti, bez preskakanja.\n\n"
+        "Iskoristi SVE vesti, bez preskakanja.\n\n",
         + text
     )
 
