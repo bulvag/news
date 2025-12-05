@@ -71,18 +71,15 @@ def load_recent_news(hours: int = 6, max_items: int = 200):
     return items
 
 
-# ---------- 2) PRIPREMA TEKSTA ZA MODEL + MAPA ID → URL ----------
+# ---------- 2) PRIPREMA TEKSTA ZA MODEL ----------
 
 def build_model_input(items):
     """
     Za svaku vest pravimo blok sa naslovom, izvorom, tekstom i linkom.
     Full tekst skraćujemo da ne pregori kontekst.
-    Vraća:
-      - veliki tekst za model
-      - mapu {id_vesti (int): url}
+    Vraća jedan veliki string za slanje modelu.
     """
     blocks = []
-    id_to_url = {}
     MAX_CHARS = 800  # ~400 tokena po vesti
 
     for i, it in enumerate(items, 1):
@@ -95,10 +92,6 @@ def build_model_input(items):
         if len(full) > MAX_CHARS:
             full = full[:MAX_CHARS] + "…"
 
-        # zapamti mapiranje ID -> URL (ako ga ima)
-        if url:
-            id_to_url[i] = url
-
         block = f"""VEST {i}
 IZVOR: {source}
 NASLOV: {title}
@@ -108,8 +101,7 @@ LINK: {url}
 """
         blocks.append(block)
 
-    big_text = "\n\n-----\n\n".join(blocks)
-    return big_text, id_to_url
+    return "\n\n-----\n\n".join(blocks)
 
 
 # ---------- 3) POZIV OPENAI-a (AI GRUPIŠE PREKO ID-JEVA) ----------
