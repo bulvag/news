@@ -198,7 +198,7 @@ def generate_raw_feed(items: list):
 
     ET.SubElement(ch, "title").text = "News digest RAW (Danas + BBC)"
     ET.SubElement(ch, "link").text = "https://bulvag.github.io/news/news.xml"
-    ET.SubElement(ch, "description").text = "Sirove vesti iz poslednja 24h"
+    ET.SubElement(ch, "description").text = "Sirove vesti iz poslednjih 6h"
     ET.SubElement(ch, "language").text = "sr"
     ET.SubElement(ch, "lastBuildDate").text = datetime.utcnow().strftime(
         "%a, %d %b %Y %H:%M:%S GMT"
@@ -279,7 +279,7 @@ def generate_digest(topics: list):
 # ---------- 6) MAIN ----------
 
 def main():
-    items = load_recent_news(hours=24, max_items=200)
+    items = load_recent_news(hours=6, max_items=200)
     if not items:
         print("Nema vesti, ništa ne radim.")
         return
