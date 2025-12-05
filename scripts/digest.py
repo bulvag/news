@@ -233,6 +233,49 @@ def attach_links_to_topics(topics: list, id_to_url: dict):
         t["links"] = links
 
 
+# ---------- 3c) POPUNI NEDOSTAJAJUĆE VESTI ----------
+
+def fill_missing_ids(topics: list, id_to_url: dict):
+    """
+    Nađi sve ID-jeve koji NISU ni u jednoj temi i gurni ih u posebnu temu
+    'Pojedinačne vesti (bez tematske grupe)'.
+    """
+    all_ids = set(id_to_url.keys())
+    used_ids = set()
+
+    for t in topics:
+        for _id in (t.get("ids") or []):
+            try:
+                used_ids.add(int(_id))
+            except (TypeError, ValueError):
+                continue
+
+    missing_ids = sorted(all_ids - used_ids)
+
+    if not missing_ids:
+        print("Svi ID-jevi su pokriveni u temama.")
+        return
+
+    extra_links = []
+    for i in missing_ids:
+        url = id_to_url.get(i)
+        if url and url not in extra_links:
+            extra_links.append(url)
+
+    if not extra_links:
+        print("Postoje ID-jevi bez URL-a, preskačem dodatnu temu.")
+        return
+
+    topics.append({
+        "title": "Pojedinačne vesti (bez tematske grupe)",
+        "summary": "Ove vesti nisu ušle u veće tematske celine, ali su i dalje relevantne.",
+        "ids": missing_ids,
+        "links": extra_links,
+    })
+
+    print(f"Dodat ekstra topic sa {len(missing_ids)} preostalih vesti.")
+
+
 # ---------- 4) RAW RSS (news/news.xml) ----------
 
 def generate_raw_feed(items: list):
@@ -335,6 +378,7 @@ def main():
     topics = call_openai_for_digest(text)
     if topics:
         attach_links_to_topics(topics, id_to_url)
+        fill_missing_ids(topics, id_to_url)
         generate_digest(topics)
     else:
         print("AI digest nije generisan (nema ili loš odgovor).")
