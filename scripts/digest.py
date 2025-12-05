@@ -414,13 +414,23 @@ def run_full_digest(items: list, max_rounds: int = 3):
         # "svaka vest = jedna tema"
         text = build_model_input(leftover_items)
         system_msg = (
-            "Za ove vesti napravi PO JEDNU TEMU ZA SVAKU vest.\n"
-            "Za svaku vest:\n"
-            "- 'title' neka bude naslov vesti,\n"
-            "- 'summary' 3–6 rečenica na srpskom o toj jednoj vesti,\n"
-            "- 'links' neka sadrži samo URL te vesti.\n"
-            "Vrati JSON sa ključem 'topics', bez dodatnog teksta."
-        )
+    "Za ove vesti napravi JEDNU temu.\n"
+    "Unutar te teme napravi više podgrupa (tematskih sekcija), kao podnaslove.\n"
+    "Svaka podgrupa treba da ima naziv i listu vesti koje joj pripadaju.\n"
+    "Podgrupe biraj semantički: država, region, politika, sport, kultura, ekonomija, protesti, vojska...\n"
+    "Na kraju te jedne teme dodaj klasičan summary od 5–10 rečenica.\n"
+    "Na kraju stavi klasičnu listu linkova svih vesti.\n"
+    "Vrati JSON formata:\n"
+    "{\n"
+    "  \"topics\": [\n"
+    "    {\n"
+    "      \"title\": \"Preostale vesti (tematski pregled)\",\n"
+    "      \"summary\": \"...\",\n"
+    "      \"links\": [\"...\"]\n"
+    "    }\n"
+    "  ]\n"
+    "}\n"
+)
         try:
             resp = client.chat.completions.create(
                 model="gpt-4o-mini",
