@@ -71,14 +71,18 @@ def load_recent_news(hours: int = 6, max_items: int = 200):
     return items
 
 
-# ---------- 2) PRIPREMA TEKSTA ZA MODEL ----------
+# ---------- 2) PRIPREMA TEKSTA ZA MODEL + MAPA ID → URL ----------
 
 def build_model_input(items):
     """
     Za svaku vest pravimo blok sa naslovom, izvorom, tekstom i linkom.
     Full tekst skraćujemo da ne pregori kontekst.
+    Vraća:
+      - veliki tekst za model
+      - mapu {id_vesti (int): url}
     """
     blocks = []
+    id_to_url = {}
     MAX_CHARS = 800  # ~400 tokena po vesti
 
     for i, it in enumerate(items, 1):
@@ -91,6 +95,10 @@ def build_model_input(items):
         if len(full) > MAX_CHARS:
             full = full[:MAX_CHARS] + "…"
 
+        # zapamti mapiranje ID -> URL (ako ga ima)
+        if url:
+            id_to_url[i] = url
+
         block = f"""VEST {i}
 IZVOR: {source}
 NASLOV: {title}
@@ -100,53 +108,68 @@ LINK: {url}
 """
         blocks.append(block)
 
-    return "\n\n-----\n\n".join(blocks)
+    big_text = "\n\n-----\n\n".join(blocks)
+    return big_text, id_to_url
 
 
-# ---------- 3) POZIV OPENAI-a (AI GRUPIŠE, NE MI) ----------
+# ---------- 3) POZIV OPENAI-a (AI GRUPIŠE PREKO ID-JEVA) ----------
 
 def call_openai_for_digest(text: str) -> list:
     """
-    AI SAM bira teme, ali mu eksplicitno kažemo:
-    - svaka vest mora biti u nekoj temi,
-    - svaka tema ima listu SVIH linkova vesti u toj temi,
-    - izlaz je striktan JSON sa 'topics'.
+    AI SAM bira teme.
+    UMESTO linkova, tražimo da vrati listu ID-jeva vesti (brojevi iz 'VEST N').
+    JSON format:
+    {
+      "topics": [
+        {
+          "title": "...",
+          "summary": "...",
+          "ids": [1, 5, 23]
+        },
+        ...
+      ]
+    }
     """
     if not API_KEY:
         print("Nema API ključa (VESTI), preskačem AI digest.")
         return []
 
     system_msg = (
-    "Ti si napredni analitičar vesti. Odgovaraj ISKLJUČIVO na srpskom jeziku.\n\n"
-    "Dobićeš veliki broj vesti iz različitih izvora (Danas, BBC, itd.). "
-    "SVAKA vest mora biti obrađena – NIŠTA se ne preskače.\n\n"
-    "Tvoj zadatak:\n"
-    "1. Automatski grupiši vesti u tematske celine:\n"
-    "   – koristi semantičko razumevanje (ne goli ključne reči),\n"
-    "   – grupiši vesti koje govore o istom događaju, procesu, regionu ili narativu,\n"
-    "   – napravi onoliko tema koliko je zaista potrebno (10, 20, 30… nije bitno).\n\n"
-    "2. Za SVAKU temu obavezno kreiraj:\n"
-    "   • \"title\" – kratak, precizan tematski naslov,\n"
-    "   • \"summary\" – NAJMANJE 5, a POŽELJNO 8–12 potpunih rečenica na srpskom jeziku "
-    "koje jasno objašnjavaju šta se dešava i zašto je važno,\n"
-    "   • \"links\" – listu SVIH URL-ova vesti koje pripadaju toj temi. "
-    "   Ako se tema pojavljuje i u Danas i na BBC-u, SVI ti linkovi idu u istu listu \"links\".\n\n"
-    "3. Pravila rada:\n"
-    "   – ništa ne izmišljaš,\n"
-    "   – ne grupišeš po redosledu, već po značenju i sadržaju,\n"
-    "   – NEMA preskakanja vesti: svaka vest mora biti u TAČNO jednoj temi,\n"
-    "   – ako za neku temu imaš malo vesti, summary i dalje mora imati bar 5 rečenica "
-    "     (objasni širi kontekst).\n\n"
-    "Vrati odgovor ISKLJUČIVO kao validan JSON sledeće strukture (bez teksta van JSON-a):\n"
-    "{\n"
-    "  \"topics\": [\n"
-    "    {\"title\": \"...\", \"summary\": \"...\", \"links\": [\"...\", \"...\"]}\n"
-    "  ]\n"
-    "}\n"
-)
+        "Ti si napredni analitičar vesti. Odgovaraj ISKLJUČIVO na srpskom jeziku.\n\n"
+        "Dobićeš veliki broj vesti iz različitih izvora. Svaku vest moraš obraditi — ništa se ne preskače.\n\n"
+        "Svaka vest u ulazu ima oblik:\n"
+        "VEST N\n"
+        "IZVOR: ...\n"
+        "NASLOV: ...\n"
+        "...\n"
+        "LINK: ...\n\n"
+        "Broj N (1, 2, 3, ...) je ID vesti.\n\n"
+        "Tvoj zadatak:\n"
+        "1. Automatski grupiši vesti u tematske celine:\n"
+        "   – koristi semantičko razumevanje,\n"
+        "   – teme formiraj inteligentno (ne po ključnim rečima),\n"
+        "   – grupiši zajedno vesti koje govore o istom događaju, istoj situaciji, istoj državi, regionu ili narativu,\n"
+        "   – napravi onoliko tema koliko je zaista potrebno (10, 20, 30… nije bitno).\n\n"
+        "2. Za svaku temu kreiraj:\n"
+        "   • \"title\" – kratak, precizan tematski naslov,\n"
+        "   • \"summary\" – NAJMANJE 5, a POŽELJNO 8–12 jasnih rečenica koje opisuju šta se dešava i zašto je važno,\n"
+        "   • \"ids\" – listu svih ID-jeva vesti (brojevi N iz 'VEST N') koje pripadaju toj temi.\n\n"
+        "3. Pravila rada:\n"
+        "   – ništa ne izmišljaš,\n"
+        "   – ne grupišeš po redosledu, već po značenju,\n"
+        "   – sve vesti moraju biti uključene u neku temu; ne sme ostati nijedna van kategorije,\n"
+        "   – svaka vest (svaki ID) sme da bude u NAJVIŠE jednoj temi.\n\n"
+        "Vrati odgovor ISKLJUČIVO kao validan JSON sledeće strukture (bez teksta van JSON-a):\n"
+        "{\n"
+        "  \"topics\": [\n"
+        "    {\"title\": \"...\", \"summary\": \"...\", \"ids\": [1, 2, 3]},\n"
+        "    {\"title\": \"...\", \"summary\": \"...\", \"ids\": [4]}\n"
+        "  ]\n"
+        "}\n"
+    )
 
     user_msg = (
-        "Tuturutu (svaka počinje sa 'VEST N'). "
+        "Ovo su vesti iz poslednjih nekoliko sati (svaka počinje sa 'VEST N'). "
         "Iskoristi SVE vesti, bez preskakanja.\n\n"
         + text
     )
@@ -189,6 +212,27 @@ def call_openai_for_digest(text: str) -> list:
         return []
 
 
+# ---------- 3b) MAPIRANJE ID-JEVA NA LINKOVE ----------
+
+def attach_links_to_topics(topics: list, id_to_url: dict):
+    """
+    U svaki topic ubacuje 'links' na osnovu 'ids' i mape id_to_url.
+    """
+    for t in topics:
+        raw_ids = t.get("ids") or []
+        links = []
+        for _id in raw_ids:
+            # model može da vrati int ili string
+            try:
+                i = int(_id)
+            except (TypeError, ValueError):
+                continue
+            url = id_to_url.get(i)
+            if url and url not in links:
+                links.append(url)
+        t["links"] = links
+
+
 # ---------- 4) RAW RSS (news/news.xml) ----------
 
 def generate_raw_feed(items: list):
@@ -197,7 +241,7 @@ def generate_raw_feed(items: list):
 
     ET.SubElement(ch, "title").text = "News digest RAW (Danas + BBC)"
     ET.SubElement(ch, "link").text = "https://bulvag.github.io/news/news.xml"
-    ET.SubElement(ch, "description").text = "Sirove vesti iz poslednjih 6h"
+    ET.SubElement(ch, "description").text = "Sirove vesti iz poslednjih sati"
     ET.SubElement(ch, "language").text = "sr"
     ET.SubElement(ch, "lastBuildDate").text = datetime.utcnow().strftime(
         "%a, %d %b %Y %H:%M:%S GMT"
@@ -227,7 +271,7 @@ def generate_digest(topics: list):
     for t in topics:
         links = t.get("links") or []
         total_links += len(links)
-    print("DIGEST: Ukupno obrađenih vesti =", total_links)
+    print("DIGEST: Ukupno obrađenih vesti (po linkovima) =", total_links)
 
     rss = ET.Element("rss", version="2.0")
     ch = ET.SubElement(rss, "channel")
@@ -287,9 +331,10 @@ def main():
     generate_raw_feed(items)
 
     # 2) AI digest
-    text = build_model_input(items)
+    text, id_to_url = build_model_input(items)
     topics = call_openai_for_digest(text)
     if topics:
+        attach_links_to_topics(topics, id_to_url)
         generate_digest(topics)
     else:
         print("AI digest nije generisan (nema ili loš odgovor).")
