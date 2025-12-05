@@ -135,38 +135,34 @@ def call_openai_for_digest(text: str) -> list:
         return []
 
     system_msg = (
-        "Ti si napredni analitičar vesti. Odgovaraj ISKLJUČIVO na srpskom jeziku.\n\n"
-        "Dobićeš veliki broj vesti iz različitih izvora. Svaku vest moraš obraditi — ništa se ne preskače.\n\n"
-        "Svaka vest u ulazu ima oblik:\n"
-        "VEST N\n"
-        "IZVOR: ...\n"
-        "NASLOV: ...\n"
-        "...\n"
-        "LINK: ...\n\n"
-        "Broj N (1, 2, 3, ...) je ID vesti.\n\n"
-        "Tvoj zadatak:\n"
-        "1. Automatski grupiši vesti u tematske celine:\n"
-        "   – koristi semantičko razumevanje,\n"
-        "   – teme formiraj inteligentno (ne po ključnim rečima),\n"
-        "   – grupiši zajedno vesti koje govore o istom događaju, istoj situaciji, istoj državi, regionu ili narativu,\n"
-        "   – napravi onoliko tema koliko je zaista potrebno (10, 20, 30… nije bitno).\n\n"
-        "2. Za svaku temu kreiraj:\n"
-        "   • \"title\" – kratak, precizan tematski naslov,\n"
-        "   • \"summary\" – NAJMANJE 5, a POŽELJNO 8–12 jasnih rečenica koje opisuju šta se dešava i zašto je važno,\n"
-        "   • \"ids\" – listu svih ID-jeva vesti (brojevi N iz 'VEST N') koje pripadaju toj temi.\n\n"
-        "3. Pravila rada:\n"
-        "   – ništa ne izmišljaš,\n"
-        "   – ne grupišeš po redosledu, već po značenju,\n"
-        "   – sve vesti moraju biti uključene u neku temu; ne sme ostati nijedna van kategorije,\n"
-        "   – svaka vest (svaki ID) sme da bude u NAJVIŠE jednoj temi.\n\n"
-        "Vrati odgovor ISKLJUČIVO kao validan JSON sledeće strukture (bez teksta van JSON-a):\n"
-        "{\n"
-        "  \"topics\": [\n"
-        "    {\"title\": \"...\", \"summary\": \"...\", \"ids\": [1, 2, 3]},\n"
-        "    {\"title\": \"...\", \"summary\": \"...\", \"ids\": [4]}\n"
-        "  ]\n"
-        "}\n"
-    )
+    "Ti si napredni analitičar vesti. Odgovaraj ISKLJUČIVO na srpskom jeziku.\n\n"
+    "Dobićeš veliki broj vesti iz različitih izvora. Svaku vest moraš obraditi — ništa se ne preskače.\n\n"
+    "Tvoj zadatak:\n"
+    "1. Automatski grupiši vesti u tematske celine:\n"
+    "   – koristi semantičko razumevanje,\n"
+    "   – teme formiraj inteligentno (ne po ključnim rečima),\n"
+    "   – grupiši vesti koje govore o istom događaju, istoj situaciji, istoj državi, regionu ili narativu,\n"
+    "   – napravi onoliko tema koliko je zaista potrebno (10, 20, 30… neograničeno).\n\n"
+    "2. Za svaku temu kreiraj:\n"
+    "   • \"title\" – kratak, precizan tematski naslov,\n"
+    "   • \"summary\" – sažetak od 5–12 jasnih rečenica koji opisuje šta se dešava,\n"
+    "   • \"links\" – SVE URL-ove vesti koje pripadaju toj temi.\n\n"
+    "3. Pravila:\n"
+    "   – apsolutno ni jedna vest ne sme ostati van tema,\n"
+    "   – ne izmišljaš ništa,\n"
+    "   – ne grupišeš po redosledu, nego po značenju,\n"
+    "   – ako je vest usamljena, napravi joj samostalnu temu.\n\n"
+    "Vrati isključivo VALIDAN JSON bez ičega van njega:\n"
+    "{\n"
+    "  \"topics\": [\n"
+    "    {\n"
+    "      \"title\": \"...\",\n"
+    "      \"summary\": \"...\",\n"
+    "      \"links\": [\"...\", \"...\"]\n"
+    "    }\n"
+    "  ]\n"
+    "}\n"
+)
 
     user_msg = (
         "Ovo su vesti iz poslednjih nekoliko sati (svaka počinje sa 'VEST N'). "
@@ -364,25 +360,115 @@ def generate_digest(topics: list):
 
 # ---------- 6) MAIN ----------
 
+def run_full_digest(items: list, max_rounds: int = 3):
+    """
+    Pokušavamo više krugova dok sve vesti koje imaju URL
+    ne završe u nekoj temi.
+    """
+    # mapa: url -> vest
+    url_to_item = {}
+    for it in items:
+        url = (it.get("url") or it.get("link") or "").strip()
+        if url:
+            url_to_item[url] = it
+
+    all_urls = set(url_to_item.keys())
+    remaining_urls = set(all_urls)
+    all_topics: list[dict] = []
+
+    for round_idx in range(1, max_rounds + 1):
+        if not remaining_urls:
+            break
+
+        # pripremi listu vesti za ovaj krug
+        round_items = [url_to_item[u] for u in remaining_urls]
+        print(f"ROUND {round_idx}: šaljem {len(round_items)} vesti u model")
+
+        text = build_model_input(round_items)
+        topics = call_openai_for_digest(text)
+
+        if not topics:
+            print("Model vratio prazan odgovor u ovom krugu.")
+            break
+
+        all_topics.extend(topics)
+
+        # pogledaj koje URL-ove je model realno upotrebio
+        used_urls = set()
+        for t in topics:
+            links = t.get("links") or []
+            for u in links:
+                u = (u or "").strip()
+                if u in remaining_urls:
+                    used_urls.add(u)
+
+        print(f"ROUND {round_idx}: model iskoristio {len(used_urls)} vesti")
+
+        # ažuriraj remaining
+        remaining_urls -= used_urls
+
+        # ako se ništa nije pomerilo, nema svrhe ponavljati
+        if not used_urls:
+            print("U ovom krugu model nije pokrio nove vesti, prekidam.")
+            break
+
+    # ako i dalje ima vesti koje nisu upakovane u temu,
+    # pravimo poseban poslednji poziv: svaka vest = posebna tema
+    if remaining_urls:
+        leftover_items = [url_to_item[u] for u in remaining_urls]
+        print(f"Ostalo još {len(leftover_items)} vesti – pravim posebne teme za svaku.")
+
+        # od ovih vesti pravimo tekst gde eksplicitno tražimo:
+        # "svaka vest = jedna tema"
+        text = build_model_input(leftover_items)
+        system_msg = (
+            "Za ove vesti napravi PO JEDNU TEMU ZA SVAKU vest.\n"
+            "Za svaku vest:\n"
+            "- 'title' neka bude naslov vesti,\n"
+            "- 'summary' 3–6 rečenica na srpskom o toj jednoj vesti,\n"
+            "- 'links' neka sadrži samo URL te vesti.\n"
+            "Vrati JSON sa ključem 'topics', bez dodatnog teksta."
+        )
+        try:
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {
+                        "role": "user",
+                        "content": "Ovo su vesti. Svaka vest treba da bude posebna tema:\n\n"
+                        + text,
+                    },
+                ],
+                temperature=0.2,
+            )
+            content = resp.choices[0].message.content.strip()
+            s = content[content.find("{") : content.rfind("}") + 1]
+            data = json.loads(s)
+            extra_topics = data.get("topics", [])
+            print(f"Posebne teme za preostale vesti: {len(extra_topics)}")
+            all_topics.extend(extra_topics)
+        except Exception as e:
+            print("Greška u poslednjem krugu za preostale vesti:", e)
+
+    return all_topics
+
+
 def main():
     items = load_recent_news(hours=6, max_items=200)
     if not items:
         print("Nema vesti, ništa ne radim.")
         return
 
-    # 1) Sirov feed
+    # 1) Sirov feed (RAW)
     generate_raw_feed(items)
 
-    # 2) AI digest
-    text, id_to_url = build_model_input(items)
-    topics = call_openai_for_digest(text)
+    # 2) AI digest u više krugova, dok sve vesti ne budu pokrivene
+    topics = run_full_digest(items)
     if topics:
-        attach_links_to_topics(topics, id_to_url)
-        fill_missing_ids(topics, id_to_url)
         generate_digest(topics)
     else:
-        print("AI digest nije generisan (nema ili loš odgovor).")
-
+        print("Nema tema – digest nije generisan.")
 
 if __name__ == "__main__":
     main()
