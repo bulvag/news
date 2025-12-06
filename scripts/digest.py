@@ -167,7 +167,6 @@ def call_openai_for_digest(text: str) -> list:
 "Ako na kraju ostane nekoliko nepovezanih vesti (do oko 10), napravi JEDNU temu:\n"
 "'Preostale pojedinačne vesti (kratak pregled)'.\n"
 "U toj jednoj temi za svaku vest napiši mini-naslov i jednu jasnu informativnu rečenicu.\n"
-"Nikada ne pravi 10+ odvojenih pojedinačnih tema.\n\n"
 
 "OUTPUT FORMAT:\n"
 "Vrati isključivo VALIDAN JSON:\n"
@@ -191,7 +190,7 @@ def call_openai_for_digest(text: str) -> list:
 
     try:
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1",
             messages=[
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
@@ -343,7 +342,6 @@ def generate_digest(topics: list):
     )
 
     for t in topics:
-        # fallback ako model ipak vrati string umesto objekta
         if isinstance(t, str):
             title = t
             summary = t
@@ -365,7 +363,7 @@ def generate_digest(topics: list):
             body_parts.append("<br/><br/><b>VESTI:</b><br/>" + html_links)
 
         desc = " ".join(body_parts) if body_parts else "Nema dodatnog sažetka."
-        ET.SubElement(item, "description").text = desc
+        ET.SubElement(item, "description").text = desc   # ← OVO POPRAVLJAMO
 
         guid = f"{title}-{datetime.utcnow().isoformat()}"
         ET.SubElement(item, "guid").text = guid
@@ -460,7 +458,7 @@ def run_full_digest(items: list, max_rounds: int = 3):
 )
         try:
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4.1",
                 messages=[
                     {"role": "system", "content": system_msg},
                     {
