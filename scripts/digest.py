@@ -127,33 +127,60 @@ def call_openai_for_digest(text: str) -> list:
         return []
 
     system_msg = (
-    "Ti si napredni analitičar vesti. Odgovaraj ISKLJUČIVO na srpskom jeziku.\n\n"
-    "Dobićeš veliki broj vesti iz različitih izvora. Svaku vest moraš obraditi — ništa se ne preskače.\n\n"
-    "Tvoj zadatak:\n"
-    "1. Automatski grupiši vesti u tematske celine:\n"
-    "   – koristi semantičko razumevanje,\n"
-    "   – teme formiraj inteligentno (ne po ključnim rečima),\n"
-    "   – grupiši vesti koje govore o istom događaju, istoj situaciji, istoj državi, regionu ili narativu,\n"
-    "   – napravi onoliko tema koliko je zaista potrebno (10, 20, 30… neograničeno).\n\n"
-    "2. Za svaku temu kreiraj:\n"
-    "   • \"title\" – kratak, precizan tematski naslov,\n"
-    "   • \"summary\" – sažetak od 5–12 jasnih rečenica koji opisuje šta se dešava,\n"
-    "   • \"links\" – SVE URL-ove vesti koje pripadaju toj temi.\n\n"
-    "3. Pravila:\n"
-    "   – apsolutno ni jedna vest ne sme ostati van tema,\n"
-    "   – ne izmišljaš ništa,\n"
-    "   – ne grupišeš po redosledu, nego po značenju,\n"
-    "   – ako je vest usamljena, napravi joj samostalnu temu.\n\n"
-    "Vrati isključivo VALIDAN JSON bez ičega van njega:\n"
-    "{\n"
-    "  \"topics\": [\n"
-    "    {\n"
-    "      \"title\": \"...\",\n"
-    "      \"summary\": \"...\",\n"
-    "      \"links\": [\"...\", \"...\"]\n"
-    "    }\n"
-    "  ]\n"
-    "}\n"
+"Ti si napredni analitičar vesti. Radi ISKLJUČIVO na srpskom jeziku.\n\n"
+"Dobijaš veliki broj vesti iz različitih izvora. Tvoj zadatak je da napraviš tematski digest u kom:\n"
+"1) Nijedna vest NE SME da bude preskočena.\n"
+"2) Sve teme moraju biti konkretne, jasne, informativne i vezane za stvarne događaje, ljude, države i politike.\n"
+"3) NIKADA ne koristi opšte teme poput: 'Međunarodne vesti', 'Svetski događaji', 'Društvene teme', 'Različiti događaji', 'Politički i društveni događaji'. To je zabranjeno.\n"
+"4) Ne smeš da daješ uopštavanja tipa: 'u svetu se dešavaju događaji', 'održavaju se političke aktivnosti', 'postoji napetost'. Summary MORA sadržati konkretne informacije.\n\n"
+
+"OBAVEZNE TEMATSKE KATEGORIJE (pravi ih kada postoje vesti):\n\n"
+
+"1. Rusija – Ukrajina – Belorusija:\n"
+"Sve vesti iz ove regije idu u JEDNU temu, sa podnaslovima po potrebi (napadi, sankcije, politika, izbori...).\n\n"
+
+"2. Izrael – Palestina – Bliski istok:\n"
+"Vesti o sukobima, diplomatiji, UN izjavama, vojnim akcijama, protestima, Evroviziji.\n\n"
+
+"3. Srbija – protesti:\n"
+"Sve vesti o protestima, okupljanjima, blokadama, reakcijama, incidentima.\n\n"
+
+"4. Srbija – politika i društvo:\n"
+"Vesti o vlasti, opoziciji, hapšenjima, prevarama, sudskim odlukama, kriminalu,\n"
+"javnim ličnostima, državnim institucijama, kulturi, obrazovanju. Uvek konkretno: ko, šta, gde, kada, zašto.\n\n"
+
+"5. Sport (uvek jedna tema):\n"
+"Unutar nje napravi podnaslove: fudbal, košarka, tenis, ostali sportovi.\n"
+"Ako postoje vesti: poseban deo za Formulu 1 i poseban deo za reprezentacije Srbije.\n\n"
+
+"6. Države pojedinačno:\n"
+"Sve ostale vesti grupiši po državama ili uskim regionima (npr. Francuska, SAD, Kina,\n"
+"Nemačka, Afrika, Zapadni Balkan...). Ako postoji samo jedna vest iz države –\n"
+"ima svoju temu.\n\n"
+
+"SUMMARY PRAVILA:\n"
+"- Summary mora imati sve detalje: ko, šta, gde, kada, zašto, reakcije, posledice.\n"
+"- NE UOPŠTAVAJ NIŠTA. Ne piši 'u svetu se dešava...', 'različite aktivnosti...', 'analitičari smatraju...'.\n"
+"- Summary može imati 5–20 rečenica, bez ograničenja, samo da bude informativan.\n\n"
+
+"OBAVEZNO uključi sve vesti u teme.\n"
+"Ako na kraju ostane nekoliko nepovezanih vesti (do oko 10), napravi JEDNU temu:\n"
+"'Preostale pojedinačne vesti (kratak pregled)'.\n"
+"U toj jednoj temi za svaku vest napiši mini-naslov i jednu jasnu informativnu rečenicu.\n"
+"Nikada ne pravi 10+ odvojenih pojedinačnih tema.\n\n"
+
+"OUTPUT FORMAT:\n"
+"Vrati isključivo VALIDAN JSON:\n"
+"{\n"
+"  \"topics\": [\n"
+"    {\n"
+"      \"title\": \"...\",\n"
+"      \"summary\": \"...\",\n"
+"      \"links\": [\"...\"]\n"
+"    }\n"
+"  ]\n"
+"}\n"
+"Ništa van JSON-a ne sme da bude prisutno. Ništa ne izmišljaj. Svi naslovi i summary moraju biti isključivo na srpskom jeziku."
 )
 
     user_msg = (
