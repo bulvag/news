@@ -496,3 +496,17 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# ----------------------------------------
+# BRISANJE STARIH VESTI (npr. starijih od 1 dan)
+# ----------------------------------------
+
+cutoff = datetime.utcnow() - timedelta(days=1)
+
+for fname in os.listdir(RAW_DIR):
+    path = RAW_DIR / fname
+    try:
+        if path.suffix == ".json" and path.stat().st_mtime < cutoff.timestamp():
+            path.unlink()
+    except Exception as e:
+        print("Greška pri brisanju:", e)
