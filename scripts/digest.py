@@ -109,14 +109,14 @@ LINK: {url}
 def call_openai_for_digest(text: str) -> list:
     """
     AI SAM bira teme.
-    UMESTO linkova, tražimo da vrati listu ID-jeva vesti (brojevi iz 'VEST N').
+    Sada tražimo da direktno vrati 'links' umesto ID-jeva.
     JSON format:
     {
       "topics": [
         {
           "title": "...",
           "summary": "...",
-          "ids": [1, 5, 23]
+          "links": ["https://...", "..."]
         },
         ...
       ]
@@ -126,62 +126,60 @@ def call_openai_for_digest(text: str) -> list:
         print("Nema API ključa (VESTI), preskačem AI digest.")
         return []
 
-system_msg = (
-    "Ti si napredni analitičar vesti. Radi ISKLJUČIVO na srpskom jeziku.\n\n"
-    "Dobijaš veliki broj vesti iz različitih izvora. Za SVAKU vest moraš da odlučiš kojoj temi pripada "
-    "i da je obradiš – nijedna vest ne sme da bude preskočena.\n\n"
-    "OSNOVNA PRAVILA GRUPISANJA:\n"
-    "- Prvo grupiši vesti po STVARNOJ temi / događaju (npr. 'SAD – izbori', "
-    "'Protesti u Srbiji'"
-    "- Državu ili region koristi samo kao deo naslova teme, uz jasno objašnjenje šta se dešava.\n"
-    "- STROGO JE ZABRANJENO da praviš opšte, prazne teme tipa: 'Međunarodne vesti', "
-    "'Svetski događaji', 'Društvene teme', 'Politički i društveni događaji', 'Različiti događaji' i slično.\n\n"
-    "OBAVEZNE BLOK-TEME (ako postoje vesti):\n"
-    "- 'Rusija – Ukrajina – Belorusija' – sve vesti iz tog rata / regiona (borbe, napadi, sankcije, izbori, unutrašnja politika), "
-    "ali unutar summary-ja jasno razdvajaj podteme.\n"
-    "- 'Izrael – Palestina – Bliski istok' – rat, diplomatija, UN, protesti, napadi, pogibije.\n"
-    "- 'Protesti u Srbiji' – SVE vesti o protestima, blokadama, okupljanjima, zahtevima, incidentima i reakcijama u Srbiji.\n"
-    "- 'Sport' – JEDNA jedina tema za sve sportove. Unutar summary-ja obavezno prave podceline: "
-    "fudbal, košarka, tenis, Formula 1 (ako je ima), reprezentacije Srbije (ako ih ima), ostali sportovi.\n\n"
-    "SRBIJA (VAŽNO):\n"
-    "- NE pravi jednu ogromnu temu 'Srbija – politika i društvo'.\n"
-    "- Umesto toga pravi više manjih tema po KONKRETNIM slučajevima i aferama: npr. "
-    "- Vesti grupiši po kombinaciji DRŽAVA + TEMA (npr.  "
-    "'SAD – izbori').\n"
-    "- Ako ima više sitnih vesti iz mnogo različitih zemalja, možeš da ih spojiš u jednu širu temu "
-    "sličnog tipa (npr. 'Evropa – bezbednosni incidenti', 'Nemačka – kriminal i istrage'), "
-    "ali u summary-ju mora jasno da piše KO je šta uradio i GDE.\n\n"
-    "ZABRANE:\n"
-    "- Nikada ne pravi teme sa potpuno praznim ili skoro praznim summary-jem.\n"
-    "- Nikada ne pravi summary od jedne uopštene rečenice tipa: 'u svetu se dešavaju događaji', "
-    "'postoji napetost', 'održavaju se političke aktivnosti', 'ima mnogo problema u društvu'.\n"
-    "- Ne sme da postoji tema u kojoj se ne može prepoznati nijedna konkretna vest.\n\n"
-    "SUMMARY (ZA SVAKU TEMU):\n"
-    "- Summary mora da sadrži STVARNE INFORMACIJE iz vesti:\n"
-    "  ko je, šta je uradio, gde, kada, zbog čega, kakve su posledice, kakve su reakcije.\n"
-    "- Ako tema sadrži više vesti, summary mora da pokrije više ključnih vesti, ne samo jednu.\n"
-    "- Koristi više rečenica,  onoliko koliko je potrebno (5, 10, 15 i više), važno je da bude informativno i konkretno.\n"
-    "- Ne piši pamflete ni opšte ocene, nego direktne činjenične opise događaja.\n\n"
-    "POJEDINAČNE I PREOSTALE VESTI:\n"
-    "- Teme treba da sadrže više povezanih vesti kad god je to moguće.\n"
-    "- NIKAKO NE PRAVI odvojene tema gde svaka imaju po jednu vest.\n"
-    "- Ako na kraju ipak ostane nekoliko nepovezanih vesti koje ne možeš da uklopiš ni u jednu normalnu temu, "
-    "napravi JEDNU zajedničku temu 'Preostale pojedinačne vesti (kratak pregled)'.\n"
-    "- U summary-ju te teme koristi listu sa crticama i novim redom, gde svaka stavka ima mini-naslov i jednu jasnu rečenicu "
-    "sa ključnom informacijom (ko, šta, gde).\n"
-    "- Ne pravi zasebne teme za svaku sitnu vest ako možeš da je spojiš sa iole sličnim sadržajem.\n\n"
-    "LINKOVI:\n"
-    "- Za SVAKU temu obavezno popuni polje 'links' sa SVIM URL-ovima vesti koje pripadaju toj temi.\n"
-    "- Linkove ne menjaš, ne prepisuješ ručno i ne izmišljaš.\n\n"
-    "OUTPUT FORMAT (strogo obavezan):\n"
-    "- Vrati isključivo VALIDAN JSON oblika:\n"
-    "{ \"topics\": [ { \"title\": \"...\", \"summary\": \"...\", \"links\": [\"...\", \"...\"] } ] }\n"
-    "- Ništa van JSON-a ne sme da se pojavi.\n"
-    "- Svi naslovi i ceo summary za svaku temu moraju biti isključivo na SRPSKOM jeziku.\n"
-)
+    system_msg = (
+        "Ti si napredni analitičar vesti. Radi ISKLJUČIVO na srpskom jeziku.\n\n"
+        "Dobijaš veliki broj vesti iz različitih izvora. Za SVAKU vest moraš da odlučiš kojoj temi pripada "
+        "i da je obradiš – nijedna vest ne sme da bude preskočena.\n\n"
+        "OSNOVNA PRAVILA GRUPISANJA:\n"
+        "- Prvo grupiši vesti po STVARNOJ temi / događaju (npr. 'SAD – izbori', "
+        "'Protesti u Srbiji').\n"
+        "- Državu ili region koristi samo kao deo naslova teme, uz jasno objašnjenje šta se dešava.\n"
+        "- STROGO JE ZABRANJENO da praviš opšte, prazne teme tipa: 'Međunarodne vesti', "
+        "'Svetski događaji', 'Društvene teme', 'Politički i društveni događaji', 'Različiti događaji' i slično.\n\n"
+        "OBAVEZNE BLOK-TEME (ako postoje vesti):\n"
+        "- 'Rusija – Ukrajina – Belorusija' – sve vesti iz tog rata / regiona (borbe, napadi, sankcije, izbori, unutrašnja politika), "
+        "ali unutar summary-ja jasno razdvajaj podteme.\n"
+        "- 'Izrael – Palestina – Bliski istok' – rat, diplomatija, UN, protesti, napadi, pogibije.\n"
+        "- 'Protesti u Srbiji' – SVE vesti o protestima, blokadama, okupljanjima, zahtevima, incidentima i reakcijama u Srbiji.\n"
+        "- 'Sport' – JEDNA jedina tema za sve sportove. Unutar summary-ja obavezno pravi podceline: "
+        "fudbal, košarka, tenis, Formula 1 (ako je ima), reprezentacije Srbije (ako ih ima), ostali sportovi.\n\n"
+        "SRBIJA (VAŽNO):\n"
+        "- NE pravi jednu ogromnu temu 'Srbija – politika i društvo'.\n"
+        "- Umesto toga pravi više manjih tema po KONKRETNIM slučajevima i aferama.\n"
+        "- Vesti grupiši po kombinaciji DRŽAVA + TEMA (npr. 'SAD – izbori').\n"
+        "- Ako ima više sitnih vesti iz mnogo različitih zemalja, možeš da ih spojiš u jednu širu temu "
+        "sličnog tipa (npr. 'Evropa – bezbednosni incidenti', 'Nemačka – kriminal i istrage'), "
+        "ali u summary-ju mora jasno da piše KO je šta uradio i GDE.\n\n"
+        "ZABRANE:\n"
+        "- Nikada ne pravi teme sa potpuno praznim ili skoro praznim summary-jem.\n"
+        "- Nikada ne pravi summary od jedne uopštene rečenice tipa: 'u svetu se dešavaju događaji', "
+        "'postoji napetost', 'održavaju se političke aktivnosti', 'ima mnogo problema u društvu'.\n"
+        "- Ne sme da postoji tema u kojoj se ne može prepoznati nijedna konkretna vest.\n\n"
+        "SUMMARY (ZA SVAKU TEMU):\n"
+        "- Summary mora da sadrži STVARNE INFORMACIJE iz vesti:\n"
+        "  ko je, šta je uradio, gde, kada, zbog čega, kakve su posledice, kakve su reakcije.\n"
+        "- Ako tema sadrži više vesti, summary mora da pokrije više ključnih vesti, ne samo jednu.\n"
+        "- Koristi više rečenica, onoliko koliko je potrebno (5, 10, 15 i više), važno je da bude informativno i konkretno.\n"
+        "- Ne piši pamflete ni opšte ocene, nego direktne činjenične opise događaja.\n\n"
+        "POJEDINAČNE I PREOSTALE VESTI:\n"
+        "- Teme treba da sadrže više povezanih vesti kad god je to moguće.\n"
+        "- NIKAKO NE PRAVI odvojene teme gde svaka ima po jednu vest.\n"
+        "- Ako na kraju ipak ostane nekoliko nepovezanih vesti koje ne možeš da uklopiš ni u jednu normalnu temu, "
+        "napravi JEDNU zajedničku temu 'Preostale pojedinačne vesti (kratak pregled)'.\n"
+        "- U summary-ju te teme koristi listu sa crticama i novim redom, gde svaka stavka ima mini-naslov i jednu jasnu rečenicu "
+        "sa ključnom informacijom (ko, šta, gde).\n"
+        "- Ne pravi zasebne teme za svaku sitnu vest ako možeš da je spojiš sa iole sličnim sadržajem.\n\n"
+        "LINKOVI:\n"
+        "- Za SVAKU temu obavezno popuni polje 'links' sa SVIM URL-ovima vesti koje pripadaju toj temi.\n"
+        "- Linkove ne menjaš, ne prepisuješ ručno i ne izmišljaš.\n\n"
+        "OUTPUT FORMAT (strogo obavezan):\n"
+        "- Vrati isključivo VALIDAN JSON oblika:\n"
+        "{ \"topics\": [ { \"title\": \"...\", \"summary\": \"...\", \"links\": [\"...\", \"...\"] } ] }\n"
+        "- Ništa van JSON-a ne sme da se pojavi.\n"
+        "- Svi naslovi i ceo summary za svaku temu moraju biti isključivo na SRPSKOM jeziku.\n"
+    )
 
-
-user_msg = (
+    user_msg = (
         "Ovo su vesti iz poslednjih nekoliko sati (svaka počinje sa 'VEST N'). "
         "Iskoristi SVE vesti, bez preskakanja.\n\n"
         + text
