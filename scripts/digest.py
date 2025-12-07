@@ -181,7 +181,7 @@ system_msg = (
 )
 
 
-    user_msg = (
+user_msg = (
         "Ovo su vesti iz poslednjih nekoliko sati (svaka počinje sa 'VEST N'). "
         "Iskoristi SVE vesti, bez preskakanja.\n\n"
         + text
