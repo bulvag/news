@@ -179,7 +179,7 @@ system_msg = (
     "- Ništa van JSON-a ne sme da se pojavi.\n"
     "- Svi naslovi i ceo summary za svaku temu moraju biti isključivo na SRPSKOM jeziku.\n"
 )
-)
+
 
     user_msg = (
         "Ovo su vesti iz poslednjih nekoliko sati (svaka počinje sa 'VEST N'). "
