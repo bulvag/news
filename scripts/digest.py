@@ -104,12 +104,11 @@ LINK: {url}
     return "\n\n-----\n\n".join(blocks)
 
 
-# ---------- 3) POZIV OPENAI-a (AI GRUPIŠE PREKO ID-JEVA) ----------
+# ---------- 3) POZIV OPENAI-a (AI GRUPIŠE I VRAĆA LINKS) ----------
 
 def call_openai_for_digest(text: str) -> list:
     """
-    AI SAM bira teme.
-    Sada tražimo da direktno vrati 'links' umesto ID-jeva.
+    AI dobija sve vesti i vraća listu tema sa sažetkom i linkovima.
     JSON format:
     {
       "topics": [
@@ -223,68 +222,58 @@ def call_openai_for_digest(text: str) -> list:
         return []
 
 
-# ---------- 3b) MAPIRANJE ID-JEVA NA LINKOVE ----------
+# ---------- 3b) POST-PROCESIRANJE TEMA (bez pojedinačnih vesti) ----------
 
-def attach_links_to_topics(topics: list, id_to_url: dict):
+def post_process_topics(topics: list, url_to_item: dict) -> list:
     """
-    U svaki topic ubacuje 'links' na osnovu 'ids' i mape id_to_url.
+    Uklanja teme koje imaju samo jedan link i prebacuje ih
+    u zajedničku temu 'Preostale pojedinačne vesti (kratak pregled)'.
+    Svaka preostala vest ide u NOVI RED u summary-ju.
     """
-    for t in topics:
-        raw_ids = t.get("ids") or []
-        links = []
-        for _id in raw_ids:
-            # model može da vrati int ili string
-            try:
-                i = int(_id)
-            except (TypeError, ValueError):
-                continue
-            url = id_to_url.get(i)
-            if url and url not in links:
-                links.append(url)
-        t["links"] = links
-
-
-# ---------- 3c) POPUNI NEDOSTAJAJUĆE VESTI ----------
-
-def fill_missing_ids(topics: list, id_to_url: dict):
-    """
-    Nađi sve ID-jeve koji NISU ni u jednoj temi i gurni ih u posebnu temu
-    'Pojedinačne vesti (bez tematske grupe)'.
-    """
-    all_ids = set(id_to_url.keys())
-    used_ids = set()
+    final_topics: list[dict] = []
+    leftover_links: list[str] = []
 
     for t in topics:
-        for _id in (t.get("ids") or []):
-            try:
-                used_ids.add(int(_id))
-            except (TypeError, ValueError):
-                continue
+        if not isinstance(t, dict):
+            continue
 
-    missing_ids = sorted(all_ids - used_ids)
+        links = [u for u in (t.get("links") or []) if u]
+        if len(links) <= 1:
+            # ovde skupljamo pojedinačne vesti
+            for u in links:
+                if u not in leftover_links:
+                    leftover_links.append(u)
+        else:
+            # normalne teme ostaju
+            t["links"] = links
+            final_topics.append(t)
 
-    if not missing_ids:
-        print("Svi ID-jevi su pokriveni u temama.")
-        return
+    # ako nema preostalih, završavamo
+    if not leftover_links:
+        return final_topics
 
-    extra_links = []
-    for i in missing_ids:
-        url = id_to_url.get(i)
-        if url and url not in extra_links:
-            extra_links.append(url)
+    # napravi bullet listu, svaki bullet u novom redu
+    bullets = []
+    for u in leftover_links:
+        it = url_to_item.get(u, {})
+        title = (it.get("title") or u).strip()
+        source = (it.get("source") or "").strip()
+        if source:
+            bullets.append(f"- {title} ({source})")
+        else:
+            bullets.append(f"- {title}")
 
-    if not extra_links:
-        print("Postoje ID-jevi bez URL-a, preskačem dodatnu temu.")
-        return
+    # HTML sa <br/> između stavki
+    summary_html = "<br/>".join(bullets)
 
-    topics.append({
-        "title": "Pojedinačne vesti (bez tematske grupe)",
-        "summary": "Ove vesti nisu ušle u veće tematske celine, ali su i dalje relevantne.",
-        "ids": missing_ids,
-        "links": extra_links,
-    })
+    leftover_topic = {
+        "title": "Preostale pojedinačne vesti (kratak pregled)",
+        "summary": summary_html,
+        "links": leftover_links,
+    }
+    final_topics.append(leftover_topic)
 
-    print(f"Dodat ekstra topic sa {len(missing_ids)} preostalih vesti.")
+    return final_topics
 
 
 # ---------- 4) RAW RSS (news/news.xml) ----------
@@ -360,7 +349,7 @@ def generate_digest(topics: list):
             body_parts.append("<br/><br/><b>VESTI:</b><br/>" + html_links)
 
         desc = " ".join(body_parts) if body_parts else "Nema dodatnog sažetka."
-        ET.SubElement(item, "description").text = desc   # ← OVO POPRAVLJAMO
+        ET.SubElement(item, "description").text = desc
 
         guid = f"{title}-{datetime.utcnow().isoformat()}"
         ET.SubElement(item, "guid").text = guid
@@ -372,20 +361,13 @@ def generate_digest(topics: list):
     print("DIGEST OK →", DIGEST_OUTPUT)
 
 
-# ---------- 6) MAIN ----------
+# ---------- 6) MAIN LOGIKA (više krugova + čišćenje starih fajlova) ----------
 
-def run_full_digest(items: list, max_rounds: int = 3):
+def run_full_digest(items: list, url_to_item: dict, max_rounds: int = 3):
     """
     Pokušavamo više krugova dok sve vesti koje imaju URL
     ne završe u nekoj temi.
     """
-    # mapa: url -> vest
-    url_to_item = {}
-    for it in items:
-        url = (it.get("url") or it.get("link") or "").strip()
-        if url:
-            url_to_item[url] = it
-
     all_urls = set(url_to_item.keys())
     remaining_urls = set(all_urls)
     all_topics: list[dict] = []
@@ -426,87 +408,78 @@ def run_full_digest(items: list, max_rounds: int = 3):
             print("U ovom krugu model nije pokrio nove vesti, prekidam.")
             break
 
-    # ako i dalje ima vesti koje nisu upakovane u temu,
-    # pravimo poseban poslednji poziv: svaka vest = posebna tema
+    # ako su neke vesti ostale potpuno nepokrivene, samo ih dodajemo u zajedničku temu
     if remaining_urls:
-        leftover_items = [url_to_item[u] for u in remaining_urls]
-        print(f"Ostalo još {len(leftover_items)} vesti – pravim posebne teme za svaku.")
+        print(f"Ostalo još {len(remaining_urls)} vesti koje model nije iskoristio ni u jednoj temi.")
+        leftover_links = sorted(remaining_urls)
+        bullets = []
+        for u in leftover_links:
+            it = url_to_item.get(u, {})
+            title = (it.get("title") or u).strip()
+            source = (it.get("source") or "").strip()
+            if source:
+                bullets.append(f"- {title} ({source})")
+            else:
+                bullets.append(f"- {title}")
+        summary_html = "<br/>".join(bullets)
 
-        # od ovih vesti pravimo tekst gde eksplicitno tražimo:
-        # "svaka vest = jedna tema"
-        text = build_model_input(leftover_items)
-        system_msg = (
-    "Za ove vesti napravi JEDNU temu.\n"
-    "Unutar te teme napravi više podgrupa (tematskih sekcija), kao podnaslove.\n"
-    "Svaka podgrupa treba da ima naziv i listu vesti koje joj pripadaju.\n"
-    "Podgrupe biraj semantički: država, region, politika, sport, kultura, ekonomija, protesti, vojska...\n"
-    "Na kraju te jedne teme dodaj klasičan summary od 5–10 rečenica.\n"
-    "Na kraju stavi klasičnu listu linkova svih vesti.\n"
-    "Vrati JSON formata:\n"
-    "{\n"
-    "  \"topics\": [\n"
-    "    {\n"
-    "      \"title\": \"Preostale vesti (tematski pregled)\",\n"
-    "      \"summary\": \"...\",\n"
-    "      \"links\": [\"...\"]\n"
-    "    }\n"
-    "  ]\n"
-    "}\n"
-)
-        try:
-            resp = client.chat.completions.create(
-                model="gpt-4.1",
-                messages=[
-                    {"role": "system", "content": system_msg},
-                    {
-                        "role": "user",
-                        "content": "Ovo su vesti. Svaka vest treba da bude posebna tema:\n\n"
-                        + text,
-                    },
-                ],
-                temperature=0.2,
-            )
-            content = resp.choices[0].message.content.strip()
-            s = content[content.find("{") : content.rfind("}") + 1]
-            data = json.loads(s)
-            extra_topics = data.get("topics", [])
-            print(f"Posebne teme za preostale vesti: {len(extra_topics)}")
-            all_topics.extend(extra_topics)
-        except Exception as e:
-            print("Greška u poslednjem krugu za preostale vesti:", e)
+        all_topics.append({
+            "title": "Vesti koje model nije pokrio",
+            "summary": summary_html,
+            "links": list(leftover_links),
+        })
 
     return all_topics
+
+
+def clean_old_raw(days: int = 1):
+    """
+    Obriši .json fajlove iz RAW_DIR starije od `days` dana
+    (po mtime, ne po fetched_at).
+    """
+    if not RAW_DIR.exists():
+        return
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    for fname in os.listdir(RAW_DIR):
+        path = RAW_DIR / fname
+        try:
+            if path.suffix == ".json" and path.stat().st_mtime < cutoff.timestamp():
+                path.unlink()
+        except Exception as e:
+            print("Greška pri brisanju:", e)
 
 
 def main():
     items = load_recent_news(hours=6, max_items=200)
     if not items:
         print("Nema vesti, ništa ne radim.")
+        clean_old_raw(days=1)
         return
+
+    # mapa URL -> vest
+    url_to_item = {}
+    for it in items:
+        url = (it.get("url") or it.get("link") or "").strip()
+        if url:
+            url_to_item[url] = it
 
     # 1) Sirov feed (RAW)
     generate_raw_feed(items)
 
     # 2) AI digest u više krugova, dok sve vesti ne budu pokrivene
-    topics = run_full_digest(items)
+    topics = run_full_digest(items, url_to_item)
     if topics:
+        # 3) Post-procesiranje: izbaci pojedinačne teme u zajedničku listu
+        topics = post_process_topics(topics, url_to_item)
         generate_digest(topics)
     else:
         print("Nema tema – digest nije generisan.")
 
+    # 4) Čišćenje starih JSON fajlova iz raw/
+    clean_old_raw(days=1)
+
+
 if __name__ == "__main__":
     main()
-
-# ----------------------------------------
-# BRISANJE STARIH VESTI (npr. starijih od 1 dan)
-# ----------------------------------------
-
-cutoff = datetime.utcnow() - timedelta(days=1)
-
-for fname in os.listdir(RAW_DIR):
-    path = RAW_DIR / fname
-    try:
-        if path.suffix == ".json" and path.stat().st_mtime < cutoff.timestamp():
-            path.unlink()
-    except Exception as e:
-        print("Greška pri brisanju:", e)
