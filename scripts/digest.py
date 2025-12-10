@@ -27,8 +27,7 @@ client = OpenAI(api_key=API_KEY)
 def load_recent_news(hours: int = 6, max_items: int = 200):
     """
     Učitaj vesti iz RAW_DIR koje su novije od `hours` sati,
-    na osnovu mtime fajla, sortiraj po datumu opadajuće
-    i uzmi najviše `max_items` komada.
+    sortiraj po datumu opadajuće i uzmi najviše `max_items` komada.
     """
     items = []
     if not RAW_DIR.exists():
@@ -42,17 +41,6 @@ def load_recent_news(hours: int = 6, max_items: int = 200):
             continue
 
         path = RAW_DIR / fname
-
-        try:
-            mtime = datetime.utcfromtimestamp(path.stat().st_mtime)
-        except Exception as e:
-            print(f"Greška pri čitanju mtime za {path}: {e}")
-            continue
-
-        # filtriramo po mtime – samo poslednjih X sati
-        if mtime < cutoff:
-            continue
-
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -60,9 +48,18 @@ def load_recent_news(hours: int = 6, max_items: int = 200):
             print(f"Greška pri čitanju {path}: {e}")
             continue
 
-        # koristimo mtime kao referentni datum
-        data["_dt"] = mtime
-        items.append(data)
+        ts = data.get("fetched_at")
+        if not ts:
+            continue
+
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", ""))
+        except Exception:
+            continue
+
+        if dt >= cutoff:
+            data["_dt"] = dt  # privremeno za sortiranje
+            items.append(data)
 
     # najnovije prve
     items.sort(key=lambda x: x["_dt"], reverse=True)
@@ -74,13 +71,13 @@ def load_recent_news(hours: int = 6, max_items: int = 200):
     return items
 
 
-# ---------- 2) PRIPREMA TEKSTA ZA MODEL ----------
+# ---------- 2) PRIPREMA TEKSTA ZA MODEL (BEZ 'VEST #') ----------
 
 def build_model_input(items):
     """
     Za svaku vest pravimo blok sa naslovom, izvorom, tekstom i linkom.
     Full tekst skraćujemo da ne pregori kontekst.
-    NEMA više 'VEST #' oznaka.
+    Vraća jedan veliki string za slanje modelu.
     """
     blocks = []
     MAX_CHARS = 800  # ~400 tokena po vesti
@@ -95,13 +92,12 @@ def build_model_input(items):
         if len(full) > MAX_CHARS:
             full = full[:MAX_CHARS] + "…"
 
-        block = (
-            f"IZVOR: {source}\n"
-            f"NASLOV: {title}\n"
-            f"PODNASLOV: {subtitle}\n"
-            f"TEKST: {full}\n"
-            f"LINK: {url}\n"
-        )
+        block = f"""IZVOR: {source}
+NASLOV: {title}
+PODNASLOV: {subtitle}
+TEKST: {full}
+LINK: {url}
+"""
         blocks.append(block)
 
     return "\n\n-----\n\n".join(blocks)
@@ -111,7 +107,7 @@ def build_model_input(items):
 
 def call_openai_for_digest(text: str) -> list:
     """
-    AI dobija sve vesti i vraća listu tema sa sažetkom i linkovima.
+    AI dobija paket vesti i vraća listu tema sa sažetkom i linkovima.
     JSON format:
     {
       "topics": [
@@ -130,40 +126,59 @@ def call_openai_for_digest(text: str) -> list:
 
     system_msg = (
         "Ti si napredni analitičar vesti. Radi ISKLJUČIVO na srpskom jeziku.\n\n"
-        "Dobijaš veliki broj vesti iz različitih izvora. Za SVAKU vest moraš da odlučiš kojoj temi pripada "
+        "Dobijaš više desetina vesti iz različitih izvora. Za SVAKU vest moraš da odlučiš kojoj temi pripada "
         "i da je obradiš – nijedna vest ne sme da bude preskočena.\n\n"
         "OSNOVNA PRAVILA GRUPISANJA:\n"
-        "- Grupisanje ide po STVARNOJ temi / događaju (npr. 'SAD – izbori', 'Protesti u Srbiji'), "
-        "ne po apstraktnim kategorijama.\n"
-        "- Državu ili region koristi kao deo naslova teme, uz jasno objašnjenje šta se dešava.\n"
+        "- Prvo grupiši vesti po STVARNOJ temi / događaju (npr. 'SAD – izbori', "
+        "'Protesti u Srbiji').\n"
+        "- Državu ili region koristi samo kao deo naslova teme, uz jasno objašnjenje šta se dešava.\n"
         "- STROGO JE ZABRANJENO da praviš opšte, prazne teme tipa: 'Međunarodne vesti', "
         "'Svetski događaji', 'Društvene teme', 'Politički i društveni događaji', 'Različiti događaji' i slično.\n\n"
+        "OBAVEZNE BLOK-TEME (ako postoje vesti):\n"
+        "- 'Rusija – Ukrajina – Belorusija' – sve vesti iz tog rata / regiona (borbe, napadi, sankcije, izbori, unutrašnja politika), "
+        "ali unutar summary-ja jasno razdvajaj podteme.\n"
+        "- 'Izrael – Palestina – Bliski istok' – rat, diplomatija, UN, protesti, napadi, pogibije.\n"
+        "- 'Protesti u Srbiji' – SVE vesti o protestima, blokadama, okupljanjima, zahtevima, incidentima i reakcijama u Srbiji.\n"
+        "- 'Sport' – JEDNA jedina tema za sve sportove. Unutar summary-ja obavezno pravi podceline: "
+        "fudbal, košarka, tenis, Formula 1 (ako je ima), reprezentacije Srbije (ako ih ima), ostali sportovi.\n\n"
         "SRBIJA (VAŽNO):\n"
-        "- Ne pravi jednu ogromnu temu 'Srbija – politika i društvo'.\n"
+        "- NE pravi jednu ogromnu temu 'Srbija – politika i društvo'.\n"
         "- Umesto toga pravi više manjih tema po KONKRETNIM slučajevima i aferama.\n"
-        "- Vesti grupiši po kombinaciji DRŽAVA + TEMA (npr. 'SAD – izbori').\n\n"
+        "- Vesti grupiši po kombinaciji DRŽAVA + TEMA (npr. 'SAD – izbori').\n"
+        "- Ako ima više sitnih vesti iz mnogo različitih zemalja, možeš da ih spojiš u jednu širu temu "
+        "sličnog tipa (npr. 'Evropa – bezbednosni incidenti', 'Nemačka – kriminal i istrage'), "
+        "ali u summary-ju mora jasno da piše KO je šta uradio i GDE.\n\n"
         "ZABRANE:\n"
-        "- Izbegavaj teme sa samo JEDNOM vešću kad god je moguće – pokušaj da spojiš u veću celinu.\n"
-        "- Nikada ne pravi summary od jedne opšte rečenice tipa: 'u svetu se dešavaju događaji', "
-        "'postoji napetost', 'održavaju se političke aktivnosti', 'ima mnogo problema u društvu'.\n\n"
+        "- Nikada ne pravi teme sa potpuno praznim ili skoro praznim summary-jem.\n"
+        "- Nikada ne pravi summary od jedne uopštene rečenice tipa: 'u svetu se dešavaju događaji', "
+        "'postoji napetost', 'održavaju se političke aktivnosti', 'ima mnogo problema u društvu'.\n"
+        "- Ne sme da postoji tema u kojoj se ne može prepoznati nijedna konkretna vest.\n\n"
         "SUMMARY (ZA SVAKU TEMU):\n"
-        "- Summary mora da sadrži STVARNE INFORMACIJE iz vesti: ko, šta, gde, kada, zašto, posledice, reakcije.\n"
-        "- Ako tema sadrži više vesti, summary mora da pokrije više ključnih vesti, ne samo jednu.\n\n"
+        "- Summary mora da sadrži STVARNE INFORMACIJE iz vesti:\n"
+        "  ko je, šta je uradio, gde, kada, zbog čega, kakve su posledice, kakve su reakcije.\n"
+        "- Ako tema sadrži više vesti, summary mora da pokrije više ključnih vesti, ne samo jednu.\n"
+        "- Koristi više rečenica, onoliko koliko je potrebno (5, 10, 15 i više), važno je da bude informativno i konkretno.\n"
+        "- Ne piši pamflete ni opšte ocene, nego direktne činjenične opise događaja.\n\n"
         "POJEDINAČNE I PREOSTALE VESTI:\n"
         "- Teme treba da sadrže više povezanih vesti kad god je to moguće.\n"
-        "- Ako na kraju ostane malo nepovezanih vesti koje ne možeš da uklopiš ni u jednu normalnu temu, "
-        "možeš da napraviš jednu temu 'Preostale pojedinačne vesti (kratak pregled)' sa listom.\n\n"
+        "- NIKAKO NE PRAVI odvojene teme gde svaka ima po jednu vest.\n"
+        "- Ako na kraju ipak ostane nekoliko nepovezanih vesti koje ne možeš da uklopiš ni u jednu normalnu temu, "
+        "napravi JEDNU zajedničku temu 'Preostale pojedinačne vesti (kratak pregled)'.\n"
+        "- U summary-ju te teme koristi listu sa crticama i novim redom, gde svaka stavka ima mini-naslov i jednu jasnu rečenicu "
+        "sa ključnom informacijom (ko, šta, gde).\n"
+        "- Ne pravi zasebne teme za svaku sitnu vest ako možeš da je spojiš sa iole sličnim sadržajem.\n\n"
         "LINKOVI:\n"
-        "- Za SVAKU temu obavezno popuni polje 'links' sa SVIM URL-ovima vesti koje pripadaju toj temi.\n\n"
+        "- Za SVAKU temu obavezno popuni polje 'links' sa SVIM URL-ovima vesti koje pripadaju toj temi.\n"
+        "- Linkove ne menjaš, ne prepisuješ ručno i ne izmišljaš.\n\n"
         "OUTPUT FORMAT (strogo obavezan):\n"
         "- Vrati isključivo VALIDAN JSON oblika:\n"
         "{ \"topics\": [ { \"title\": \"...\", \"summary\": \"...\", \"links\": [\"...\", \"...\"] } ] }\n"
         "- Ništa van JSON-a ne sme da se pojavi.\n"
-        "- Svi naslovi i ceo summary za svaku temu moraju biti isključivo na SRPSKOM jeziku.\n"
+        "- SVI NASLOVI i ceo summary za svaku temu moraju biti isključivo na SRPSKOM jeziku (bez engleskih naslova).\n"
     )
 
     user_msg = (
-        "Ovo su vesti iz poslednjih nekoliko sati. "
+        "Ovo su vesti iz poslednjih nekoliko sati (svaka vest je blok sa IZVOR / NASLOV / TEKST / LINK). "
         "Iskoristi SVE vesti, bez preskakanja.\n\n"
         + text
     )
@@ -189,7 +204,7 @@ def call_openai_for_digest(text: str) -> list:
         start = s.find("{")
         end = s.rfind("}")
         if start != -1 and end != -1:
-            s = s[start: end + 1]
+            s = s[start : end + 1]
 
         data = json.loads(s)
         topics = data.get("topics", [])
@@ -223,7 +238,7 @@ def post_process_topics(topics: list, url_to_item: dict) -> list:
 
         links = [u for u in (t.get("links") or []) if u]
         if len(links) <= 1:
-            # skupljamo pojedinačne vesti da ih spojimo u jednu temu
+            # ovde skupljamo pojedinačne vesti
             for u in links:
                 if u not in leftover_links:
                     leftover_links.append(u)
@@ -236,7 +251,7 @@ def post_process_topics(topics: list, url_to_item: dict) -> list:
     if not leftover_links:
         return final_topics
 
-    # bullet lista, svaki bullet u novom redu
+    # napravi bullet listu, svaki bullet u novom redu
     bullets = []
     for u in leftover_links:
         it = url_to_item.get(u, {})
@@ -345,73 +360,36 @@ def generate_digest(topics: list):
     print("DIGEST OK →", DIGEST_OUTPUT)
 
 
-# ---------- 6) MAIN LOGIKA (više krugova + čišćenje starih fajlova) ----------
+# ---------- 6) MAIN LOGIKA – CHUNKOVANJE (da nema više 'Request too large') ----------
 
-def run_full_digest(items: list, url_to_item: dict, max_rounds: int = 3):
+def run_full_digest(items: list, url_to_item: dict, chunk_size: int = 50):
     """
-    Pokušavamo više krugova dok sve vesti koje imaju URL
-    ne završe u nekoj temi.
+    Jednostavnije:
+    - podelimo sve URL-ove u chunkove po `chunk_size`,
+    - za svaki chunk pozovemo model,
+    - sve teme skupimo u jedan veliki spisak.
+    Ne pravimo više dodatnu temu 'Vesti koje model nije pokrio'.
     """
-    all_urls = set(url_to_item.keys())
-    remaining_urls = set(all_urls)
+    all_urls = list(url_to_item.keys())
     all_topics: list[dict] = []
 
-    for round_idx in range(1, max_rounds + 1):
-        if not remaining_urls:
-            break
+    if not all_urls:
+        print("Nema URL-ova za AI digest.")
+        return all_topics
 
-        # pripremi listu vesti za ovaj krug
-        round_items = [url_to_item[u] for u in remaining_urls]
-        print(f"ROUND {round_idx}: šaljem {len(round_items)} vesti u model")
+    for idx in range(0, len(all_urls), chunk_size):
+        chunk_urls = all_urls[idx : idx + chunk_size]
+        round_items = [url_to_item[u] for u in chunk_urls]
+        print(f"CHUNK {idx // chunk_size + 1}: šaljem {len(round_items)} vesti u model")
 
         text = build_model_input(round_items)
         topics = call_openai_for_digest(text)
 
         if not topics:
-            print("Model vratio prazan odgovor u ovom krugu.")
-            break
+            print("Model vratio prazan odgovor za ovaj chunk.")
+            continue
 
         all_topics.extend(topics)
-
-        # pogledaj koje URL-ove je model realno upotrebio
-        used_urls = set()
-        for t in topics:
-            links = t.get("links") or []
-            for u in links:
-                u = (u or "").strip()
-                if u in remaining_urls:
-                    used_urls.add(u)
-
-        print(f"ROUND {round_idx}: model iskoristio {len(used_urls)} vesti")
-
-        # ažuriraj remaining
-        remaining_urls -= used_urls
-
-        # ako se ništa nije pomerilo, nema svrhe ponavljati
-        if not used_urls:
-            print("U ovom krugu model nije pokrio nove vesti, prekidam.")
-            break
-
-    # ako su neke vesti ostale potpuno nepokrivene, dodaj ih kao jednu posebnu temu
-    if remaining_urls:
-        print(f"Ostalo još {len(remaining_urls)} vesti koje model nije iskoristio ni u jednoj temi.")
-        leftover_links = sorted(remaining_urls)
-        bullets = []
-        for u in leftover_links:
-            it = url_to_item.get(u, {})
-            title = (it.get("title") or u).strip()
-            source = (it.get("source") or "").strip()
-            if source:
-                bullets.append(f"- {title} ({source})")
-            else:
-                bullets.append(f"- {title}")
-        summary_html = "<br/>".join(bullets)
-
-        all_topics.append({
-            "title": "Vesti koje model nije pokrio",
-            "summary": summary_html,
-            "links": list(leftover_links),
-        })
 
     return all_topics
 
@@ -419,7 +397,7 @@ def run_full_digest(items: list, url_to_item: dict, max_rounds: int = 3):
 def clean_old_raw(days: int = 1):
     """
     Obriši .json fajlove iz RAW_DIR starije od `days` dana
-    (po mtime).
+    (po mtime, ne po fetched_at).
     """
     if not RAW_DIR.exists():
         return
@@ -429,7 +407,7 @@ def clean_old_raw(days: int = 1):
     for fname in os.listdir(RAW_DIR):
         path = RAW_DIR / fname
         try:
-            if path.suffix == ".json" and datetime.utcfromtimestamp(path.stat().st_mtime) < cutoff:
+            if path.suffix == ".json" and path.stat().st_mtime < cutoff.timestamp():
                 path.unlink()
         except Exception as e:
             print("Greška pri brisanju:", e)
@@ -452,7 +430,7 @@ def main():
     # 1) Sirov feed (RAW)
     generate_raw_feed(items)
 
-    # 2) AI digest u više krugova, dok sve vesti ne budu pokrivene
+    # 2) AI digest (chunkovanje) – sve teme u jedan RSS
     topics = run_full_digest(items, url_to_item)
     if topics:
         # 3) Post-procesiranje: izbaci pojedinačne teme u zajedničku listu
