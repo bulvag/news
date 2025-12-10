@@ -26,8 +26,10 @@ client = OpenAI(api_key=API_KEY)
 
 def load_recent_news(hours: int = 6, max_items: int = 200):
     """
-    Učitaj vesti iz RAW_DIR koje su novije od `hours` sati,
+    Učitaj vesti iz RAW_DIR koje su novije od `hours` sati
+    na osnovu mtime fajla (vreme kada je collector zapisao vest),
     sortiraj po datumu opadajuće i uzmi najviše `max_items` komada.
+    Plus: ispiši statistiku po izvorima.
     """
     items = []
     if not RAW_DIR.exists():
@@ -36,30 +38,45 @@ def load_recent_news(hours: int = 6, max_items: int = 200):
 
     cutoff = datetime.utcnow() - timedelta(hours=hours)
 
+    total_files = 0
+    too_old = 0
+    read_errors = 0
+    per_source = {}
+
     for fname in os.listdir(RAW_DIR):
         if not fname.endswith(".json"):
             continue
 
         path = RAW_DIR / fname
+        total_files += 1
+
+        try:
+            mtime = datetime.utcfromtimestamp(path.stat().st_mtime)
+        except Exception as e:
+            print(f"Greška pri čitanju mtime za {path}: {e}")
+            read_errors += 1
+            continue
+
+        # 1) filtriramo isključivo po tome kada je fajl ZAPRAVO upisan
+        if mtime < cutoff:
+            too_old += 1
+            continue
+
+        # 2) učitavamo sadržaj
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception as e:
             print(f"Greška pri čitanju {path}: {e}")
+            read_errors += 1
             continue
 
-        ts = data.get("fetched_at")
-        if not ts:
-            continue
+        source = (data.get("source") or "").strip() or "NEPOZNATO"
+        per_source[source] = per_source.get(source, 0) + 1
 
-        try:
-            dt = datetime.fromisoformat(ts.replace("Z", ""))
-        except Exception:
-            continue
-
-        if dt >= cutoff:
-            data["_dt"] = dt  # privremeno za sortiranje
-            items.append(data)
+        # koristimo mtime kao _dt za sortiranje
+        data["_dt"] = mtime
+        items.append(data)
 
     # najnovije prve
     items.sort(key=lambda x: x["_dt"], reverse=True)
@@ -67,7 +84,16 @@ def load_recent_news(hours: int = 6, max_items: int = 200):
     # ograniči broj da ne probijemo context i budžet
     items = items[:max_items]
 
-    print(f"Učitano {len(items)} vesti (poslednjih {hours}h, max {max_items})")
+    print(f"UKUPNO JSON fajlova u raw/: {total_files}")
+    print(f"Preskočeno jer su stariji od {hours}h (po mtime): {too_old}")
+    print(f"Greške pri čitanju: {read_errors}")
+    print(f"Učitano za digest: {len(items)}")
+
+    if per_source:
+        print("Po izvorima (učitano u ovih", hours, "h):")
+        for src, cnt in sorted(per_source.items(), key=lambda x: x[0].lower()):
+            print(f"  {src}: {cnt}")
+
     return items
 
 
