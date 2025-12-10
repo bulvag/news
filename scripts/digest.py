@@ -71,18 +71,19 @@ def load_recent_news(hours: int = 6, max_items: int = 200):
     return items
 
 
-# ---------- 2) PRIPREMA TEKSTA ZA MODEL ----------
+# ---------- 2) PRIPREMA TEKSTA ZA MODEL (BEZ "VEST #") ----------
 
 def build_model_input(items):
     """
     Za svaku vest pravimo blok sa naslovom, izvorom, tekstom i linkom.
     Full tekst skraćujemo da ne pregori kontekst.
     Vraća jedan veliki string za slanje modelu.
+    NEMA oznaka tipa "VEST 5".
     """
     blocks = []
     MAX_CHARS = 800  # ~400 tokena po vesti
 
-    for i, it in enumerate(items, 1):
+    for it in items:
         title = (it.get("title") or "").strip()
         source = (it.get("source") or "").strip()
         subtitle = (it.get("subtitle") or "").strip()
@@ -92,15 +93,16 @@ def build_model_input(items):
         if len(full) > MAX_CHARS:
             full = full[:MAX_CHARS] + "…"
 
-        block = f"""VEST {i}
-IZVOR: {source}
-NASLOV: {title}
-PODNASLOV: {subtitle}
-TEKST: {full}
-LINK: {url}
-"""
+        block = (
+            f"IZVOR: {source}\n"
+            f"NASLOV: {title}\n"
+            f"PODNASLOV: {subtitle}\n"
+            f"TEKST: {full}\n"
+            f"LINK: {url}\n"
+        )
         blocks.append(block)
 
+    # samo separator između vesti, bez "VEST #"
     return "\n\n-----\n\n".join(blocks)
 
 
@@ -135,13 +137,6 @@ def call_openai_for_digest(text: str) -> list:
         "- Državu ili region koristi samo kao deo naslova teme, uz jasno objašnjenje šta se dešava.\n"
         "- STROGO JE ZABRANJENO da praviš opšte, prazne teme tipa: 'Međunarodne vesti', "
         "'Svetski događaji', 'Društvene teme', 'Politički i društveni događaji', 'Različiti događaji' i slično.\n\n"
-        "OBAVEZNE BLOK-TEME (ako postoje vesti):\n"
-        "- 'Rusija – Ukrajina – Belorusija' – sve vesti iz tog rata / regiona (borbe, napadi, sankcije, izbori, unutrašnja politika), "
-        "ali unutar summary-ja jasno razdvajaj podteme.\n"
-        "- 'Izrael – Palestina – Bliski istok' – rat, diplomatija, UN, protesti, napadi, pogibije.\n"
-        "- 'Protesti u Srbiji' – SVE vesti o protestima, blokadama, okupljanjima, zahtevima, incidentima i reakcijama u Srbiji.\n"
-        "- 'Sport' – JEDNA jedina tema za sve sportove. Unutar summary-ja obavezno pravi podceline: "
-        "fudbal, košarka, tenis, Formula 1 (ako je ima), reprezentacije Srbije (ako ih ima), ostali sportovi.\n\n"
         "SRBIJA (VAŽNO):\n"
         "- NE pravi jednu ogromnu temu 'Srbija – politika i društvo'.\n"
         "- Umesto toga pravi više manjih tema po KONKRETNIM slučajevima i aferama.\n"
@@ -179,7 +174,7 @@ def call_openai_for_digest(text: str) -> list:
     )
 
     user_msg = (
-        "Ovo su vesti iz poslednjih nekoliko sati (svaka počinje sa 'VEST N'). "
+        "Ovo su vesti iz poslednjih nekoliko sati. "
         "Iskoristi SVE vesti, bez preskakanja.\n\n"
         + text
     )
@@ -222,13 +217,14 @@ def call_openai_for_digest(text: str) -> list:
         return []
 
 
-# ---------- 3b) POST-PROCESIRANJE TEMA (bez pojedinačnih vesti) ----------
+# ---------- 3b) POST-PROCESIRANJE TEMA (BEZ POJEDINAČNIH VESTI) ----------
 
 def post_process_topics(topics: list, url_to_item: dict) -> list:
     """
     Uklanja teme koje imaju samo jedan link i prebacuje ih
     u zajedničku temu 'Preostale pojedinačne vesti (kratak pregled)'.
     Svaka preostala vest ide u NOVI RED u summary-ju.
+    U KRAJNJEM RSS-U NEMA TEMA SA SAMO JEDNOM VESTI.
     """
     final_topics: list[dict] = []
     leftover_links: list[str] = []
@@ -263,7 +259,7 @@ def post_process_topics(topics: list, url_to_item: dict) -> list:
         else:
             bullets.append(f"- {title}")
 
-    # HTML sa <br/> između stavki
+    # HTML sa <br/> između stavki → svaka vest u novom redu
     summary_html = "<br/>".join(bullets)
 
     leftover_topic = {
