@@ -10,14 +10,19 @@ from urllib.error import URLError, HTTPError
 
 STATE_PATH = "state.json"
 
-RSS_URL = os.environ["RSS_URL"]         
+# ---- ENV (obavezno) ----
+RSS_URL = os.environ["RSS_URL"]
+EMAIL = os.environ["EMAIL"]
+SMTP_PASS = os.environ["SMTP_PASS"]
+
+# ---- Derived (sve šalješ sa istog Gmail-a na isti Gmail) ----
 TO_EMAIL = EMAIL
 FROM_EMAIL = EMAIL
+SMTP_USER = EMAIL
 
+# ---- SMTP defaults (Gmail) ----
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
-SMTP_USER = EMAIL
-SMTP_PASS = SMTP_PASS     
 
 BELGRADE = ZoneInfo("Europe/Belgrade")
 
@@ -35,10 +40,8 @@ def load_state():
     else:
         state = {}
 
-    # defaulti
     state.setdefault("last_sent_iso", "1970-01-01T00:00:00Z")
     state.setdefault("sent_links", [])
-    # očisti ako je pogrešan tip
     if not isinstance(state["sent_links"], list):
         state["sent_links"] = []
     return state
@@ -96,7 +99,6 @@ def extract_items(xml_text: str):
         pub = clean(it.findtext("pubDate"))
         pub_dt = parse_rfc822_date(pub) if pub else datetime.now(timezone.utc)
 
-        # RSS ponekad ima CDATA/HTML u title; mi title esc-ujemo kasnije za HTML
         items.append({
             "title": title,
             "link": link,
@@ -104,7 +106,6 @@ def extract_items(xml_text: str):
             "pub_dt": pub_dt
         })
 
-    # newest first
     items.sort(key=lambda x: x["pub_dt"], reverse=True)
     return items
 
@@ -117,7 +118,7 @@ def build_html(items, subject):
         safe_link = hesc(x["link"], quote=True)
         local_dt = x["pub_dt"].astimezone(BELGRADE)
         time_str = local_dt.strftime("%Y-%m-%d %H:%M")
-        desc_html = x["description_html"]  # već je HTML; sanitizovali smo script/style
+        desc_html = x["description_html"]
 
         blocks.append(f"""
         <div style="border:1px solid #e5e7eb; border-radius:12px; padding:14px; margin:12px 0; background:#fff;">
@@ -167,7 +168,6 @@ def send_email(subject, html_body):
 
 
 def main():
-    # učitaj state
     state = load_state()
     try:
         last_sent = datetime.fromisoformat(
@@ -178,13 +178,9 @@ def main():
 
     sent_links = set(x for x in state.get("sent_links", []) if isinstance(x, str))
 
-    # učitaj RSS i parsiraj
     rss = fetch_rss(RSS_URL)
     items = extract_items(rss)
 
-    # filtriraj nove:
-    # - po pubDate (ako je dobar)
-    # - i po linku (da ne šalje duplikate ni kad pubDate nije dobar)
     new_items = []
     for x in items:
         if not x["link"]:
@@ -197,11 +193,9 @@ def main():
     if not new_items:
         return
 
-    # ograniči da mail ne bude roman
     MAX_ITEMS = int(os.environ.get("MAX_ITEMS", "25"))
     new_items = new_items[:MAX_ITEMS]
 
-    # subject: jutro/veče
     now = datetime.now(BELGRADE)
     slot = "jutro" if now.hour < 12 else "veče"
     subject = f"Vesti digest ({slot}) — {now.strftime('%Y-%m-%d')}"
@@ -209,13 +203,10 @@ def main():
     html = build_html(new_items, subject)
     send_email(subject, html)
 
-    # update state:
     newest_dt = max(x["pub_dt"] for x in new_items)
     state["last_sent_iso"] = newest_dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    # zapamti poslate linkove (rolling)
     updated_links = list(sent_links) + [x["link"] for x in new_items]
-    # dedup uz očuvanje reda
     seen = set()
     deduped = []
     for u in updated_links:
