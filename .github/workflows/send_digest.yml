@@ -1,0 +1,57 @@
+name: Send digest email
+
+on:
+  schedule:
+    # GitHub cron je UTC.
+    # Beograd zimi (decembar) je UTC+1:
+    # 08:30 Beograd = 07:30 UTC
+    # 19:30 Beograd = 18:30 UTC
+    - cron: "30 10 * * *"
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run send_digest.py
+        env:
+          # Ovo je URL ka gotovom digest feedu koji već praviš (news/digest.xml)
+          RSS_URL: ${{ secrets.RSS_URL }}
+
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+
+          # opcionalno (ako ne staviš, default u kodu je gmail)
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+
+          MAX_ITEMS: "25"
+        run: |
+          python send_digest.py
+
+      - name: Commit state.json if changed
+        run: |
+          if git diff --quiet; then
+            echo "No state changes"
+            exit 0
+          fi
+          git config user.name "digest-bot"
+          git config user.email "digest-bot@users.noreply.github.com"
+          git add state.json
+          git commit -m "Update digest state"
+          git push
