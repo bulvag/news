@@ -11,13 +11,13 @@ from urllib.error import URLError, HTTPError
 STATE_PATH = "state.json"
 
 RSS_URL = os.environ["https://bulvag.github.io/news/news/digest.xml"]           
-TO_EMAIL = os.environ["EMAIL"]
-FROM_EMAIL = os.environ["EMAIL"]
+TO_EMAIL = EMAIL
+FROM_EMAIL = EMAIL
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
-SMTP_USER = os.environ["EMAIL"]
-SMTP_PASS = os.environ["SMTP_PASS"]         
+SMTP_USER = EMAIL
+SMTP_PASS = SMTP_PASS     
 
 BELGRADE = ZoneInfo("Europe/Belgrade")
 
