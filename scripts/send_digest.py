@@ -10,23 +10,21 @@ from urllib.error import URLError, HTTPError
 
 STATE_PATH = "state.json"
 
-# ---- ENV (obavezno) ----
+# --- REQUIRED ENV ---
 RSS_URL = os.environ["RSS_URL"]
 EMAIL = os.environ["EMAIL"]
 SMTP_PASS = os.environ["SMTP_PASS"]
 
-# ---- Derived (sve šalješ sa istog Gmail-a na isti Gmail) ----
+# --- Derived (send from same Gmail to same Gmail) ---
 TO_EMAIL = EMAIL
 FROM_EMAIL = EMAIL
 SMTP_USER = EMAIL
 
-# ---- SMTP defaults (Gmail) ----
+# --- Optional env (defaults to Gmail) ---
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 
 BELGRADE = ZoneInfo("Europe/Belgrade")
-
-# koliko linkova pamtimo da ne šalje duplikate čak i kad pubDate zeza
 SENT_LINKS_LIMIT = 300
 
 
@@ -112,7 +110,6 @@ def extract_items(xml_text: str):
 
 def build_html(items, subject):
     blocks = []
-
     for x in items:
         safe_title = hesc(x["title"])
         safe_link = hesc(x["link"], quote=True)
@@ -132,7 +129,6 @@ def build_html(items, subject):
         """)
 
     safe_subject = hesc(subject)
-
     return f"""<!doctype html>
 <html>
 <head>
