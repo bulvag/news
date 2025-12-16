@@ -42,7 +42,7 @@ jobs:
 
           MAX_ITEMS: "25"
         run: |
-          python send_digest.py
+          python scripts/send_digest.py
 
       - name: Commit state.json if changed
         run: |
