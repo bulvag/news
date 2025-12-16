@@ -28,7 +28,7 @@ jobs:
       - name: Run scripts/send_digest.py
         env:
           # Ovo je URL ka gotovom digest feedu koji već praviš (news/digest.xml)
-          RSS_URL: ${{ secrets.RSS_URL }}
+          RSS_URL: https://bulvag.github.io/news/news/digest.xml
 
           TO_EMAIL: ${{ secrets.EMAIL }}
           FROM_EMAIL: ${{ secrets.EMAIL }}
@@ -37,9 +37,8 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
 
           # opcionalno (ako ne staviš, default u kodu je gmail)
-          SMTP_HOST = "smtp.gmail.com"
-          SMTP_PORT = 465
-
+          SMTP_HOST: "smtp.gmail.com"
+          SMTP_PORT: 465
 
           MAX_ITEMS: "25"
         run: |
