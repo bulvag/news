@@ -10,7 +10,7 @@ from urllib.error import URLError, HTTPError
 
 STATE_PATH = "state.json"
 
-RSS_URL = os.environ["https://bulvag.github.io/news/news/digest.xml"]           
+RSS_URL = os.environ["RSS_URL"]         
 TO_EMAIL = EMAIL
 FROM_EMAIL = EMAIL
 
