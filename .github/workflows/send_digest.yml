@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run send_digest.py
+      - name: Run scripts/send_digest.py
         env:
           # Ovo je URL ka gotovom digest feedu koji već praviš (news/digest.xml)
           RSS_URL: ${{ secrets.RSS_URL }}
