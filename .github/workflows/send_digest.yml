@@ -2,10 +2,6 @@ name: Send digest email
 
 on:
   schedule:
-    # GitHub cron je UTC.
-    # Beograd zimi (decembar) je UTC+1:
-    # 08:30 Beograd = 07:30 UTC
-    # 19:30 Beograd = 18:30 UTC
     - cron: "30 10 * * *"
     - cron: "30 18 * * *"
   workflow_dispatch:
@@ -27,19 +23,9 @@ jobs:
 
       - name: Run scripts/send_digest.py
         env:
-          # Ovo je URL ka gotovom digest feedu koji već praviš (news/digest.xml)
           RSS_URL: https://bulvag.github.io/news/news/digest.xml
-
-          TO_EMAIL: ${{ secrets.EMAIL }}
-          FROM_EMAIL: ${{ secrets.EMAIL }}
-
-          SMTP_USER: ${{ secrets.EMAIL }}
+          EMAIL: ${{ secrets.EMAIL }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
-
-          # opcionalno (ako ne staviš, default u kodu je gmail)
-          SMTP_HOST: "smtp.gmail.com"
-          SMTP_PORT: 465
-
           MAX_ITEMS: "25"
         run: |
           python scripts/send_digest.py
