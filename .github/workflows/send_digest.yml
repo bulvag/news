@@ -30,15 +30,16 @@ jobs:
           # Ovo je URL ka gotovom digest feedu koji već praviš (news/digest.xml)
           RSS_URL: ${{ secrets.RSS_URL }}
 
-          TO_EMAIL: ${{ secrets.TO_EMAIL }}
-          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          TO_EMAIL: ${{ secrets.EMAIL }}
+          FROM_EMAIL: ${{ secrets.EMAIL }}
 
-          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_USER: ${{ secrets.EMAIL }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
 
           # opcionalno (ako ne staviš, default u kodu je gmail)
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_HOST = "smtp.gmail.com"
+          SMTP_PORT = 465
+
 
           MAX_ITEMS: "25"
         run: |
