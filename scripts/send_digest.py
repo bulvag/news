@@ -38,6 +38,7 @@ def load_state():
     else:
         state = {}
 
+    # čuvamo samo sent_links (last_sent_iso ostaje kompatibilno ako već postoji)
     state.setdefault("last_sent_iso", "1970-01-01T00:00:00Z")
     state.setdefault("sent_links", [])
     if not isinstance(state["sent_links"], list):
@@ -48,17 +49,6 @@ def load_state():
 def save_state(state):
     with open(STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
-
-
-def parse_rfc822_date(s: str) -> datetime:
-    try:
-        from email.utils import parsedate_to_datetime
-        dt = parsedate_to_datetime(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-    except Exception:
-        return datetime.now(timezone.utc)
 
 
 def clean(s: str) -> str:
@@ -94,8 +84,18 @@ def extract_items(xml_text: str):
         link = clean(it.findtext("link"))
         desc = sanitize_desc(it.findtext("description") or "")
 
+        # pubDate nam više ne odlučuje da li je novo (samo za prikaz u mailu)
         pub = clean(it.findtext("pubDate"))
-        pub_dt = parse_rfc822_date(pub) if pub else datetime.now(timezone.utc)
+        pub_dt = None
+        if pub:
+            try:
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(pub)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                pub_dt = dt.astimezone(timezone.utc)
+            except Exception:
+                pub_dt = None
 
         items.append({
             "title": title,
@@ -104,7 +104,8 @@ def extract_items(xml_text: str):
             "pub_dt": pub_dt
         })
 
-    items.sort(key=lambda x: x["pub_dt"], reverse=True)
+    # sortiraj: ako ima pub_dt, newest first; ako nema, ostavi redosled (stable sort)
+    items.sort(key=lambda x: x["pub_dt"] or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
     return items
 
 
@@ -113,14 +114,19 @@ def build_html(items, subject):
     for x in items:
         safe_title = hesc(x["title"])
         safe_link = hesc(x["link"], quote=True)
-        local_dt = x["pub_dt"].astimezone(BELGRADE)
-        time_str = local_dt.strftime("%Y-%m-%d %H:%M")
+
+        if x["pub_dt"]:
+            local_dt = x["pub_dt"].astimezone(BELGRADE)
+            time_str = local_dt.strftime("%Y-%m-%d %H:%M") + " (Beograd)"
+        else:
+            time_str = "—"
+
         desc_html = x["description_html"]
 
         blocks.append(f"""
         <div style="border:1px solid #e5e7eb; border-radius:12px; padding:14px; margin:12px 0; background:#fff;">
           <div style="font-weight:800; font-size:16px; margin-bottom:6px;">{safe_title}</div>
-          <div style="font-size:12px; color:#6b7280; margin-bottom:10px;">{time_str} (Beograd)</div>
+          <div style="font-size:12px; color:#6b7280; margin-bottom:10px;">{time_str}</div>
           <div style="font-size:14px; line-height:1.5;">{desc_html}</div>
           <div style="margin-top:10px; font-size:13px;">
             <a href="{safe_link}">Otvori</a>
@@ -165,26 +171,19 @@ def send_email(subject, html_body):
 
 def main():
     state = load_state()
-    try:
-        last_sent = datetime.fromisoformat(
-            state["last_sent_iso"].replace("Z", "+00:00")
-        ).astimezone(timezone.utc)
-    except Exception:
-        last_sent = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
     sent_links = set(x for x in state.get("sent_links", []) if isinstance(x, str))
 
     rss = fetch_rss(RSS_URL)
     items = extract_items(rss)
 
+    # NOVO: “novo” = link koji još nije poslat (ne oslanjamo se na pubDate)
     new_items = []
     for x in items:
         if not x["link"]:
             continue
         if x["link"] in sent_links:
             continue
-        if x["pub_dt"] > last_sent:
-            new_items.append(x)
+        new_items.append(x)
 
     if not new_items:
         return
@@ -199,9 +198,7 @@ def main():
     html = build_html(new_items, subject)
     send_email(subject, html)
 
-    newest_dt = max(x["pub_dt"] for x in new_items)
-    state["last_sent_iso"] = newest_dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
+    # update state: dodaj poslate linkove (rolling, dedup)
     updated_links = list(sent_links) + [x["link"] for x in new_items]
     seen = set()
     deduped = []
@@ -211,6 +208,9 @@ def main():
         seen.add(u)
         deduped.append(u)
     state["sent_links"] = deduped[-SENT_LINKS_LIMIT:]
+
+    # last_sent_iso više nije bitan, ali ga ostavljamo kompatibilno
+    state["last_sent_iso"] = now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
     save_state(state)
 
