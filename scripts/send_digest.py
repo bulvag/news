@@ -22,7 +22,8 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 
 MAX_ITEMS = int(os.environ.get("MAX_ITEMS", "25"))
-FORCE_SEND = os.environ.get("FORCE_SEND", "0") == "1"  # 1 = pošalji i kad "nema novih"
+FORCE_SEND = os.environ.get("FORCE_SEND", "0") == "1"      # 1 = pošalji i kad nema novih (test)
+SEND_EMPTY = os.environ.get("SEND_EMPTY", "0") == "1"      # 1 = pošalji “nema novih” mail
 
 BELGRADE = ZoneInfo("Europe/Belgrade")
 SENT_LINKS_LIMIT = 300
@@ -39,7 +40,6 @@ def load_state():
             state = {}
     else:
         state = {}
-
     state.setdefault("sent_links", [])
     if not isinstance(state["sent_links"], list):
         state["sent_links"] = []
@@ -73,7 +73,6 @@ def fetch_xml(url: str) -> str:
 
 
 def find_text_any(el: ET.Element, local_name: str) -> str:
-    """Nađi tekst iz prvog taga sa datim local name, bez obzira na namespace."""
     for child in el.iter():
         tag = child.tag
         if isinstance(tag, str) and tag.endswith("}" + local_name):
@@ -85,7 +84,6 @@ def find_text_any(el: ET.Element, local_name: str) -> str:
 
 def extract_items(xml_text: str):
     root = ET.fromstring(xml_text)
-
     rss_items = root.findall(".//{*}item") or root.findall(".//item")
     items = []
 
@@ -95,10 +93,6 @@ def extract_items(xml_text: str):
         guid = clean(find_text_any(it, "guid"))
         desc = sanitize_desc(find_text_any(it, "description"))
 
-        # Fallback chain za link:
-        # 1) <link>
-        # 2) <guid> ako je URL
-        # 3) prvi URL iz description HTML-a
         final_link = link
         if not final_link and guid and guid.startswith("http"):
             final_link = guid
@@ -126,36 +120,46 @@ def extract_items(xml_text: str):
             "pub_dt": pub_dt
         })
 
-    # newest first (ako ima vremena)
     items.sort(key=lambda x: x["pub_dt"] or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
     return items
 
 
-def build_html(items, subject):
-    blocks = []
-    for x in items:
-        safe_title = hesc(x["title"] or "(bez naslova)")
-
-        link_val = (x.get("link") or "").strip()
-        safe_link = hesc(link_val, quote=True) if link_val else ""
-
-        if x["pub_dt"]:
-            local_dt = x["pub_dt"].astimezone(BELGRADE)
-            time_str = local_dt.strftime("%Y-%m-%d %H:%M") + " (Beograd)"
-        else:
-            time_str = "—"
-
-        desc_html = x["description_html"] or ""
-        open_link = f'<a href="{safe_link}">Otvori</a>' if safe_link else ""
-
-        blocks.append(f"""
+def build_html(items, subject, empty_note: str | None = None):
+    if empty_note:
+        note = f"""
         <div style="border:1px solid #e5e7eb; border-radius:12px; padding:14px; margin:12px 0; background:#fff;">
-          <div style="font-weight:800; font-size:16px; margin-bottom:6px;">{safe_title}</div>
-          <div style="font-size:12px; color:#6b7280; margin-bottom:10px;">{time_str}</div>
-          <div style="font-size:14px; line-height:1.5;">{desc_html}</div>
-          <div style="margin-top:10px; font-size:13px;">{open_link}</div>
+          <div style="font-weight:800; font-size:16px; margin-bottom:6px;">Nema novih vesti u ovom terminu</div>
+          <div style="font-size:14px; line-height:1.5; color:#374151;">{hesc(empty_note)}</div>
         </div>
-        """)
+        """
+        blocks_html = note
+        count = 0
+    else:
+        blocks = []
+        for x in items:
+            safe_title = hesc(x["title"] or "(bez naslova)")
+            link_val = (x.get("link") or "").strip()
+            safe_link = hesc(link_val, quote=True) if link_val else ""
+
+            if x["pub_dt"]:
+                local_dt = x["pub_dt"].astimezone(BELGRADE)
+                time_str = local_dt.strftime("%Y-%m-%d %H:%M") + " (Beograd)"
+            else:
+                time_str = "—"
+
+            desc_html = x["description_html"] or ""
+            open_link = f'<a href="{safe_link}">Otvori</a>' if safe_link else ""
+
+            blocks.append(f"""
+            <div style="border:1px solid #e5e7eb; border-radius:12px; padding:14px; margin:12px 0; background:#fff;">
+              <div style="font-weight:800; font-size:16px; margin-bottom:6px;">{safe_title}</div>
+              <div style="font-size:12px; color:#6b7280; margin-bottom:10px;">{time_str}</div>
+              <div style="font-size:14px; line-height:1.5;">{desc_html}</div>
+              <div style="margin-top:10px; font-size:13px;">{open_link}</div>
+            </div>
+            """)
+        blocks_html = "".join(blocks)
+        count = len(items)
 
     safe_subject = hesc(subject)
     return f"""<!doctype html>
@@ -164,9 +168,9 @@ def build_html(items, subject):
   <div style="max-width:900px; margin:0 auto;">
     <div style="margin-bottom:14px;">
       <div style="font-size:20px; font-weight:800; margin:0 0 6px 0;">{safe_subject}</div>
-      <div style="color:#6b7280; font-size:12px;">Ukupno tema u mailu: {len(items)}</div>
+      <div style="color:#6b7280; font-size:12px;">Ukupno tema u mailu: {count}</div>
     </div>
-    {''.join(blocks)}
+    {blocks_html}
   </div>
 </body></html>
 """
@@ -187,22 +191,12 @@ def send_email(subject, html_body):
 
 
 def main():
-    print("RSS_URL:", RSS_URL)
-    print("TO_EMAIL:", TO_EMAIL)
-    print("SMTP_HOST/PORT:", SMTP_HOST, SMTP_PORT)
-
     state = load_state()
     sent_links = set(x for x in state.get("sent_links", []) if isinstance(x, str))
 
     xml = fetch_xml(RSS_URL)
     items = extract_items(xml)
 
-    print("TOTAL items in feed:", len(items))
-    if items:
-        print("FIRST item title:", (items[0].get("title") or "")[:120])
-        print("FIRST item link:", (items[0].get("link") or "")[:200])
-
-    # “novo” = link koji još nije poslat; ako nema link nigde, fallback na title
     new_items = []
     for x in items:
         link = (x.get("link") or "").strip()
@@ -213,27 +207,25 @@ def main():
             continue
         new_items.append(x)
 
-    print("NEW items:", len(new_items))
-    if not new_items and not FORCE_SEND:
-        print("Nothing new -> not sending (FORCE_SEND=0)")
-        return
-
-    if not new_items and FORCE_SEND:
-        print("FORCE_SEND=1 -> sending first MAX_ITEMS from feed")
-        new_items = items[:MAX_ITEMS]
-
-    new_items = new_items[:MAX_ITEMS]
-
     now = datetime.now(BELGRADE)
     slot = "jutro" if now.hour < 12 else "veče"
     subject = f"Vesti digest ({slot}) — {now.strftime('%Y-%m-%d')}"
 
-    html = build_html(new_items, subject)
-    print("Sending email... items:", len(new_items))
-    send_email(subject, html)
-    print("Email sent.")
+    if not new_items and not FORCE_SEND and not SEND_EMPTY:
+        return
 
-    # update state: pamti dedup ključeve (link ili title fallback)
+    if not new_items and FORCE_SEND:
+        new_items = items[:MAX_ITEMS]
+
+    if not new_items and SEND_EMPTY:
+        html = build_html([], subject, empty_note="Digest feed je ažuriran, ali nema novih tema u odnosu na prethodno poslato.")
+        send_email(subject, html)
+        return
+
+    new_items = new_items[:MAX_ITEMS]
+    html = build_html(new_items, subject)
+    send_email(subject, html)
+
     updated = list(sent_links)
     for x in new_items:
         link = (x.get("link") or "").strip()
