@@ -27,7 +27,6 @@ jobs:
           EMAIL: ${{ secrets.EMAIL }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           MAX_ITEMS: "25"
-          FORCE_SEND: "1"
         run: |
           python scripts/send_digest.py
 
