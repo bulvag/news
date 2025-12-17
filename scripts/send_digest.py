@@ -22,10 +22,12 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
 
 MAX_ITEMS = int(os.environ.get("MAX_ITEMS", "25"))
-FORCE_SEND = os.environ.get("FORCE_SEND", "0") == "1"  # ako staviš 1, šalje i kad "nema novih"
+FORCE_SEND = os.environ.get("FORCE_SEND", "0") == "1"  # 1 = pošalji i kad "nema novih"
 
 BELGRADE = ZoneInfo("Europe/Belgrade")
 SENT_LINKS_LIMIT = 300
+
+URL_RE = re.compile(r"https?://[^\s\"'<>()]+", re.IGNORECASE)
 
 
 def load_state():
@@ -37,6 +39,7 @@ def load_state():
             state = {}
     else:
         state = {}
+
     state.setdefault("sent_links", [])
     if not isinstance(state["sent_links"], list):
         state["sent_links"] = []
@@ -83,69 +86,33 @@ def find_text_any(el: ET.Element, local_name: str) -> str:
 def extract_items(xml_text: str):
     root = ET.fromstring(xml_text)
 
-    # 1) RSS: <item> (namespace-agnostic)
-    rss_items = root.findall(".//{*}item")
-    if not rss_items:
-        rss_items = root.findall(".//item")
-
+    rss_items = root.findall(".//{*}item") or root.findall(".//item")
     items = []
 
-    if rss_items:
-        for it in rss_items:
-            title = clean(find_text_any(it, "title"))
-            link = clean(find_text_any(it, "link"))
-            desc = sanitize_desc(find_text_any(it, "description"))
-            pub = clean(find_text_any(it, "pubDate"))
+    for it in rss_items:
+        title = clean(find_text_any(it, "title"))
+        link = clean(find_text_any(it, "link"))
+        guid = clean(find_text_any(it, "guid"))
+        desc = sanitize_desc(find_text_any(it, "description"))
 
-            pub_dt = None
-            if pub:
-                try:
-                    from email.utils import parsedate_to_datetime
-                    dt = parsedate_to_datetime(pub)
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    pub_dt = dt.astimezone(timezone.utc)
-                except Exception:
-                    pub_dt = None
+        # Fallback chain za link:
+        # 1) <link>
+        # 2) <guid> ako je URL
+        # 3) prvi URL iz description HTML-a
+        final_link = link
+        if not final_link and guid and guid.startswith("http"):
+            final_link = guid
+        if not final_link:
+            m = URL_RE.search(desc or "")
+            if m:
+                final_link = m.group(0)
 
-            items.append({
-                "title": title,
-                "link": link,
-                "description_html": desc,
-                "pub_dt": pub_dt
-            })
-
-        # newest first (ako ima vremena)
-        items.sort(key=lambda x: x["pub_dt"] or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
-        return items
-
-    # 2) Atom: <entry>
-    atom_entries = root.findall(".//{*}entry") or root.findall(".//entry")
-    for ent in atom_entries:
-        title = clean(find_text_any(ent, "title"))
-
-        # Atom link je često <link href="..."/>
-        link = ""
-        for child in ent.iter():
-            tag = child.tag
-            if (isinstance(tag, str) and tag.endswith("}link")) or tag == "link":
-                href = child.attrib.get("href")
-                if href:
-                    link = href.strip()
-                    break
-                if child.text and child.text.strip():
-                    link = child.text.strip()
-                    break
-
-        # sadržaj: <content> ili <summary>
-        desc = find_text_any(ent, "content") or find_text_any(ent, "summary")
-        desc = sanitize_desc(desc)
-
-        pub = clean(find_text_any(ent, "updated") or find_text_any(ent, "published"))
+        pub = clean(find_text_any(it, "pubDate"))
         pub_dt = None
         if pub:
             try:
-                dt = datetime.fromisoformat(pub.replace("Z", "+00:00"))
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(pub)
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
                 pub_dt = dt.astimezone(timezone.utc)
@@ -154,11 +121,12 @@ def extract_items(xml_text: str):
 
         items.append({
             "title": title,
-            "link": link,
+            "link": final_link,
             "description_html": desc,
             "pub_dt": pub_dt
         })
 
+    # newest first (ako ima vremena)
     items.sort(key=lambda x: x["pub_dt"] or datetime(1970, 1, 1, tzinfo=timezone.utc), reverse=True)
     return items
 
@@ -167,7 +135,9 @@ def build_html(items, subject):
     blocks = []
     for x in items:
         safe_title = hesc(x["title"] or "(bez naslova)")
-        safe_link = hesc(x["link"] or "", quote=True)
+
+        link_val = (x.get("link") or "").strip()
+        safe_link = hesc(link_val, quote=True) if link_val else ""
 
         if x["pub_dt"]:
             local_dt = x["pub_dt"].astimezone(BELGRADE)
@@ -176,7 +146,6 @@ def build_html(items, subject):
             time_str = "—"
 
         desc_html = x["description_html"] or ""
-
         open_link = f'<a href="{safe_link}">Otvori</a>' if safe_link else ""
 
         blocks.append(f"""
@@ -233,12 +202,14 @@ def main():
         print("FIRST item title:", (items[0].get("title") or "")[:120])
         print("FIRST item link:", (items[0].get("link") or "")[:200])
 
+    # “novo” = link koji još nije poslat; ako nema link nigde, fallback na title
     new_items = []
     for x in items:
         link = (x.get("link") or "").strip()
-        if not link:
+        key = link if link else (x.get("title") or "").strip()
+        if not key:
             continue
-        if link in sent_links:
+        if key in sent_links:
             continue
         new_items.append(x)
 
@@ -262,15 +233,22 @@ def main():
     send_email(subject, html)
     print("Email sent.")
 
-    # update state
-    updated_links = list(sent_links) + [(x.get("link") or "").strip() for x in new_items if (x.get("link") or "").strip()]
+    # update state: pamti dedup ključeve (link ili title fallback)
+    updated = list(sent_links)
+    for x in new_items:
+        link = (x.get("link") or "").strip()
+        key = link if link else (x.get("title") or "").strip()
+        if key:
+            updated.append(key)
+
     seen = set()
     deduped = []
-    for u in updated_links:
+    for u in updated:
         if u in seen:
             continue
         seen.add(u)
         deduped.append(u)
+
     state["sent_links"] = deduped[-SENT_LINKS_LIMIT:]
     save_state(state)
 
